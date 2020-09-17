@@ -2,7 +2,7 @@
 
 Imperator Save is a library to ergonomically work with Imperator Rome saves (debug + standard).
 
-```rust
+```rust,ignore
 use imperator_save::{ImperatorExtractor, Encoding};
 use std::io::Cursor;
 
