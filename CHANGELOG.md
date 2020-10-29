@@ -1,3 +1,7 @@
+## v0.1.2 - 2020-10-29
+
+* Update internal parser for performance improvements
+
 ## v0.1.1 - 2020-10-02
 
 * Update internal parser dependency to 0.7
