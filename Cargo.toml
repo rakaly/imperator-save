@@ -17,14 +17,13 @@ serialize = []
 
 [dependencies]
 jomini = "0.8"
-once_cell = "1"
 zip = { version =  "0.5", default-features = false, features = ["deflate"] }
 serde = { version = "1", features = ["derive"] }
 memmap = { version = "0.7", optional = true }
 twoway = "0.2"
 
 [dev-dependencies]
-rust-s3 = "0.26"
+attohttpc = "0.16"
 criterion = "0.3"
 
 [[bench]]
