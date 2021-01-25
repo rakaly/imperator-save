@@ -153,7 +153,7 @@ impl Melter {
                     Some(id) => {
                         known_number = in_object == 1 && id == "seed";
                         writer.extend_from_slice(&id.as_bytes())
-                    },
+                    }
                     None => match self.on_failed_resolve {
                         FailedResolveStrategy::Error => {
                             return Err(ImperatorErrorKind::UnknownToken { token_id: *x }.into());
