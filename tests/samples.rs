@@ -78,7 +78,7 @@ fn test_non_ascii_save() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn test_roundtrip_header_melt() {
     let data = include_bytes!("fixtures/header");
-    let out = imperator_save::Melter::new().melt(&data[..]).unwrap();
+    let (out, _tokens) = imperator_save::Melter::new().melt(&data[..]).unwrap();
     let (header, encoding) = ImperatorExtractor::extract_header(&out).unwrap();
     assert_eq!(encoding, Encoding::Debug);
     assert_eq!(header.version, String::from("1.5.3"));
@@ -88,6 +88,6 @@ fn test_roundtrip_header_melt() {
 fn test_header_melt() {
     let data = include_bytes!("fixtures/header");
     let melted = include_bytes!("fixtures/header.melted");
-    let out = imperator_save::Melter::new().melt(&data[..]).unwrap();
+    let (out, _tokens) = imperator_save::Melter::new().melt(&data[..]).unwrap();
     assert_eq!(&melted[..], &out[..]);
 }
