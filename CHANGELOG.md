@@ -1,3 +1,7 @@
+## v0.1.3 - 2021-02-05
+
+- Melter will only quote values that are quoted in plaintext
+
 ## v0.1.2 - 2020-10-29
 
 * Update internal parser for performance improvements
