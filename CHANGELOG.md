@@ -1,6 +1,14 @@
-## v0.1.3 - 2021-02-05
+## v0.2.2 - 2021-03-14
+
+- Bump internal parser to latest
+
+## v0.2.1 - 2021-02-05
 
 - Melter will only quote values that are quoted in plaintext
+
+## v0.2.0 - 2021-01-25
+
+- Return unknown tokens when melting
 
 ## v0.1.2 - 2020-10-29
 
