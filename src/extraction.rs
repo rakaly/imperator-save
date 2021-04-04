@@ -6,10 +6,8 @@ use crate::{
 };
 use jomini::{BinaryDeserializer, TextDeserializer, TextTape};
 use serde::de::{Deserialize, DeserializeOwned};
-use std::io::{Read, Seek};
-
-// The amount of data that we will scan up to looking for a zip signature
-pub(crate) const HEADER_LEN_UPPER_BOUND: usize = 0x10000;
+use std::io::{Cursor, Read, Seek, SeekFrom};
+use zip::{result::ZipError, ZipArchive};
 
 /// Describes the format of the save before decoding
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -94,17 +92,22 @@ impl ImperatorExtractorBuilder {
     where
         T: Deserialize<'de>,
     {
-        let core_data = skip_save_prefix(&data);
-        let data = &core_data[..std::cmp::min(core_data.len(), HEADER_LEN_UPPER_BOUND)];
-        let (header, _rest) = split_on_zip(data);
-        if sniff_is_binary(header) {
+        let data = skip_save_prefix(&data);
+        let mut cursor = Cursor::new(data);
+        let offset = match detect_encoding(&mut cursor)? {
+            BodyEncoding::Plain => data.len(),
+            BodyEncoding::Zip(zip) => zip.offset() as usize,
+        };
+
+        let data = &data[..offset];
+        if sniff_is_binary(data) {
             let res = BinaryDeserializer::builder_flavor(ImperatorFlavor)
                 .on_failed_resolve(self.on_failed_resolve)
-                .from_slice(header, &TokenLookup)?;
-
+                .from_slice(data, &TokenLookup)?;
             Ok((res, Encoding::Standard))
         } else {
-            let res = TextDeserializer::from_utf8_slice(core_data)?;
+            // allow uncompressed text as TextZip even though the game doesn't produce said format
+            let res = TextDeserializer::from_utf8_slice(data)?;
             Ok((res, Encoding::Debug))
         }
     }
@@ -122,33 +125,37 @@ impl ImperatorExtractorBuilder {
     where
         R: Read + Seek,
     {
-        // First we need to determine if we are in an autosave or a header + zip save.
-        // We determine this by examining the first 64KB and if the zip magic header
-        // occurs then we know it is a zip file.
-        let mut buffer = vec![0; HEADER_LEN_UPPER_BOUND];
-        read_upto(&mut reader, &mut buffer)?;
+        let mut buffer = Vec::new();
+        match detect_encoding(&mut reader)? {
+            BodyEncoding::Plain => {
+                // Ensure we are at the start of the stream
+                reader.seek(SeekFrom::Start(0))?;
 
-        if zip_index(&buffer).is_some() {
-            let mut zip = zip::ZipArchive::new(&mut reader)
-                .map_err(ImperatorErrorKind::ZipCentralDirectory)?;
-            let res = match self.extraction {
-                Extraction::InMemory => {
-                    melt_in_memory(&mut buffer, "gamestate", &mut zip, self.on_failed_resolve)
-                }
-                #[cfg(feature = "mmap")]
-                Extraction::MmapTemporaries => {
-                    melt_with_temporary("gamestate", &mut zip, self.on_failed_resolve)
-                }
-            }?;
+                // So we can get the length
+                let len = reader.seek(SeekFrom::End(0))?;
+                reader.seek(SeekFrom::Start(0))?;
+                buffer.reserve(len as usize);
+                reader.read_to_end(&mut buffer)?;
 
-            Ok((res, Encoding::Standard))
-        } else {
-            reader.read_to_end(&mut buffer)?;
-            let data = skip_save_prefix(&buffer);
-            let tape = TextTape::from_slice(data)?;
-            let header = TextDeserializer::from_utf8_tape(&tape)?;
-            let gamestate = TextDeserializer::from_utf8_tape(&tape)?;
-            Ok((Save { header, gamestate }, Encoding::Debug))
+                let data = skip_save_prefix(&buffer);
+                let tape = TextTape::from_slice(data)?;
+                let header = TextDeserializer::from_utf8_tape(&tape)?;
+                let gamestate = TextDeserializer::from_utf8_tape(&tape)?;
+                Ok((Save { header, gamestate }, Encoding::Debug))
+            }
+            BodyEncoding::Zip(mut zip) => {
+                let res = match self.extraction {
+                    Extraction::InMemory => {
+                        melt_in_memory(&mut buffer, "gamestate", &mut zip, self.on_failed_resolve)
+                    }
+                    #[cfg(feature = "mmap")]
+                    Extraction::MmapTemporaries => {
+                        melt_with_temporary("gamestate", &mut zip, self.on_failed_resolve)
+                    }
+                }?;
+
+                Ok((res, Encoding::Standard))
+            }
         }
     }
 }
@@ -265,39 +272,27 @@ fn sniff_is_binary(data: &[u8]) -> bool {
     data.get(2..4).map_or(false, |x| x == [0x01, 0x00])
 }
 
-/// Returns the index in the data where the zip occurs
-pub(crate) fn zip_index(data: &[u8]) -> Option<usize> {
-    twoway::find_bytes(data, &[0x50, 0x4b, 0x03, 0x04])
-}
-
-/// The save embeds a zip after the header. This function finds the zip magic code
-/// and splits the data into two so they can be parsed separately.
-fn split_on_zip(data: &[u8]) -> (&[u8], &[u8]) {
-    if let Some(idx) = zip_index(data) {
-        data.split_at(idx)
-    } else {
-        data.split_at(data.len())
-    }
-}
-
-// Read until either the reader is out of data or the buffer is filled.
-// This is essentially Read::read_exact without the validation at the end
-fn read_upto<R>(reader: &mut R, mut buf: &mut [u8]) -> Result<(), std::io::Error>
+pub(crate) enum BodyEncoding<'a, R>
 where
-    R: std::io::Read,
+    R: Read + Seek,
 {
-    while !buf.is_empty() {
-        match reader.read(buf) {
-            Ok(0) => break,
-            Ok(n) => {
-                let tmp = buf;
-                buf = &mut tmp[n..];
-            }
-            Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => {}
-            Err(e) => return Err(e),
-        }
+    Zip(ZipArchive<&'a mut R>),
+    Plain,
+}
+
+pub(crate) fn detect_encoding<R>(reader: &mut R) -> Result<BodyEncoding<R>, ImperatorError>
+where
+    R: Read + Seek,
+{
+    let zip_attempt = zip::ZipArchive::new(reader);
+
+    match zip_attempt {
+        Ok(x) => Ok(BodyEncoding::Zip(x)),
+        Err(ZipError::InvalidArchive(_)) => Ok(BodyEncoding::Plain),
+        Err(e) => Err(ImperatorError::new(
+            ImperatorErrorKind::ZipCentralDirectory(e),
+        )),
     }
-    Ok(())
 }
 
 #[cfg(test)]
