@@ -144,10 +144,10 @@ impl Melter {
                     let data = x.view_data();
                     writer.extend_from_slice(&data);
                 }
-                BinaryToken::F32_1(x) => {
+                BinaryToken::F32(x) => {
                     write!(writer, "{}", x).map_err(ImperatorErrorKind::IoErr)?
                 }
-                BinaryToken::F32_2(x) => {
+                BinaryToken::F64(x) => {
                     write!(writer, "{}", x).map_err(ImperatorErrorKind::IoErr)?
                 }
                 BinaryToken::Token(x) => match TokenLookup.resolve(*x) {
