@@ -117,7 +117,7 @@ impl Melter {
                     if known_number {
                         writer.extend_from_slice(format!("{}", x).as_bytes());
                         known_number = false;
-                    } else if let Some(date) = ImperatorDate::from_binary(*x) {
+                    } else if let Some(date) = ImperatorDate::from_binary_heuristic(*x) {
                         writer.extend_from_slice(date.game_fmt().as_bytes());
                     } else {
                         writer.extend_from_slice(format!("{}", x).as_bytes());
