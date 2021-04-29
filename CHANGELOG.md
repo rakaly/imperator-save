@@ -1,3 +1,7 @@
+## v0.2.4 - 2021-04-29
+
+- Update to latest parser API
+
 ## v0.2.3 - 2021-04-26
 
 - More accurate melter for 64bit floating point values
