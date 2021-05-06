@@ -77,7 +77,7 @@ impl Melter {
             match token {
                 BinaryToken::Object(_) => {
                     did_change = true;
-                    writer.extend_from_slice(b"{\r\n");
+                    writer.extend_from_slice(b"{\n");
                     depth += 1;
                     in_objects.push(in_object);
                     in_object = 1;
@@ -210,7 +210,6 @@ impl Melter {
                 in_object = 2;
             } else if in_object == 2 {
                 in_object = 1;
-                writer.push(b'\r');
                 writer.push(b'\n');
             } else if in_object != 1 {
                 writer.push(b' ');
