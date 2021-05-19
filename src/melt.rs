@@ -18,6 +18,7 @@ use std::{
 pub struct Melter {
     on_failed_resolve: FailedResolveStrategy,
     extraction: Extraction,
+    rewrite: bool,
 }
 
 impl Default for Melter {
@@ -25,6 +26,7 @@ impl Default for Melter {
         Melter {
             extraction: Extraction::InMemory,
             on_failed_resolve: FailedResolveStrategy::Ignore,
+            rewrite: true,
         }
     }
 }
@@ -44,6 +46,15 @@ impl Melter {
     /// Set the behavior for when an unresolved binary token is encountered
     pub fn with_on_failed_resolve(mut self, strategy: FailedResolveStrategy) -> Self {
         self.on_failed_resolve = strategy;
+        self
+    }
+
+    /// Set if the melter should rewrite properties to better match the plaintext format
+    ///
+    /// Setting to false will preserve binary fields and values even if they
+    /// don't make any sense in the plaintext output.
+    pub fn with_rewrite(mut self, rewrite: bool) -> Self {
+        self.rewrite = rewrite;
         self
     }
 
@@ -151,7 +162,7 @@ impl Melter {
                     write!(writer, "{}", x).map_err(ImperatorErrorKind::IoErr)?
                 }
                 BinaryToken::Token(x) => match TokenLookup.resolve(*x) {
-                    Some(id) if id == "is_ironman" && in_object == 1 => {
+                    Some(id) if (self.rewrite && id == "is_ironman") && in_object == 1 => {
                         let skip = tokens
                             .get(token_idx + 1)
                             .map(|next_token| match next_token {
