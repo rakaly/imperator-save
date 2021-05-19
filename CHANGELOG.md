@@ -1,3 +1,8 @@
+## v0.2.5 - 2021-05-18
+
+- Omit carriage return when writing melted output
+- Preserve ironman fields in melted output with rewrite config
+
 ## v0.2.4 - 2021-04-29
 
 - Update to latest parser API
