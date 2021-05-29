@@ -5,40 +5,40 @@ date=450.10.1
 ironman=yes
 meta_player_name="Suionia"
 enabled_dlcs={
-  "The Punic Wars"
+	"The Punic Wars"
 }
 play_time=646
 iron=yes
 enabled_mods={ }
 sync_ai_tasks={
-  ai_task={
-    mode=sync_ai_tasks
-    interval=1
-    count=0
-    next=0
-  }
-  ai_task={
-    mode=sync_ai_tasks
-    interval=1
-    count=0
-    next=0
-  }
-  ai_task={
-    mode=sync_ai_tasks
-    interval=1
-    count=0
-    next=0
-  }
-  ai_task={
-    mode=sync_ai_tasks
-    interval=5
-    count=0
-    next=0
-  }
-  ai_task={
-    mode=sync_ai_tasks
-    interval=31
-    count=0
-    next=0
-  }
+	ai_task={
+		mode=sync_ai_tasks
+		interval=1
+		count=0
+		next=0
+	}
+	ai_task={
+		mode=sync_ai_tasks
+		interval=1
+		count=0
+		next=0
+	}
+	ai_task={
+		mode=sync_ai_tasks
+		interval=1
+		count=0
+		next=0
+	}
+	ai_task={
+		mode=sync_ai_tasks
+		interval=5
+		count=0
+		next=0
+	}
+	ai_task={
+		mode=sync_ai_tasks
+		interval=31
+		count=0
+		next=0
+	}
 }

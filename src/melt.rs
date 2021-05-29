@@ -65,7 +65,10 @@ impl Melter {
         unknown_tokens: &mut HashSet<u16>,
     ) -> Result<(), ImperatorError> {
         let tape = BinaryTape::parser_flavor(ImperatorFlavor).parse_slice(input)?;
-        let mut wtr = TextWriterBuilder::new().from_writer(writer);
+        let mut wtr = TextWriterBuilder::new()
+            .indent_char(b'\t')
+            .indent_factor(1)
+            .from_writer(writer);
         let mut token_idx = 0;
         let mut known_number = false;
         let tokens = tape.tokens();
@@ -106,9 +109,7 @@ impl Melter {
                 BinaryToken::F32(x) => wtr.write_f32(*x)?,
                 BinaryToken::F64(x) => wtr.write_f64(*x)?,
                 BinaryToken::Token(x) => match TokenLookup.resolve(*x) {
-                    Some(id)
-                        if (self.rewrite && id == "is_ironman") && wtr.expecting_key() =>
-                    {
+                    Some(id) if (self.rewrite && id == "is_ironman") && wtr.expecting_key() => {
                         let skip = tokens
                             .get(token_idx + 1)
                             .map(|next_token| match next_token {
