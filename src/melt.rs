@@ -1,6 +1,6 @@
 use crate::{
     detect_encoding, flavor::ImperatorFlavor, tokens::TokenLookup, BodyEncoding, Extraction,
-    FailedResolveStrategy, ImperatorDate, ImperatorError, ImperatorErrorKind,
+    FailedResolveStrategy, ImperatorDate, ImperatorError, ImperatorErrorKind, PdsDate,
 };
 use jomini::{BinaryTape, BinaryToken, TextWriterBuilder, TokenResolver};
 use std::{
@@ -95,7 +95,7 @@ impl Melter {
                         wtr.write_i32(*x)?;
                         known_number = false;
                     } else if let Some(date) = ImperatorDate::from_binary_heuristic(*x) {
-                        wtr.write_date(date)?;
+                        wtr.write_date(date.game_fmt())?;
                     } else {
                         wtr.write_i32(*x)?;
                     }

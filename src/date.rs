@@ -1,1 +1,2 @@
-pub type ImperatorDate = jomini::common::Date;
+pub use jomini::common::Date as ImperatorDate;
+pub use jomini::common::PdsDate;
