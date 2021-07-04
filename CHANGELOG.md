@@ -1,3 +1,7 @@
+## v0.2.7 - 2021-07-04
+
+- Fix improper melted output when a name ended with a quote
+
 ## v0.2.6 - 2021-05-28
 
 - Melt with tabs instead of spaces
