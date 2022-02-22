@@ -1,3 +1,7 @@
+## v0.2.8 - 2022-02-22
+
+- Expose token stringification customization with `_with_tokens` methods
+
 ## v0.2.7 - 2021-07-04
 
 - Fix improper melted output when a name ended with a quote
