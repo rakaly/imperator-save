@@ -233,7 +233,7 @@ impl Melter {
                         let mut mmap = memmap::MmapMut::map_anon(zip_file.size() as usize)?;
                         std::io::copy(&mut zip_file, &mut mmap.as_mut())
                             .map_err(|e| ImperatorErrorKind::ZipExtraction("gamestate", e))?;
-                        self.convert(&mmap[..], &mut result, &unknown_tokens, resolver)?
+                        self.convert(&mmap[..], &mut result, &mut unknown_tokens, resolver)?
                     }
                 }
             }
