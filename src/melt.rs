@@ -2,7 +2,7 @@ use crate::{
     detect_encoding, flavor::ImperatorFlavor, tokens::TokenLookup, BodyEncoding, Extraction,
     FailedResolveStrategy, ImperatorDate, ImperatorError, ImperatorErrorKind, PdsDate,
 };
-use jomini::{BinaryTape, BinaryToken, TextWriterBuilder, TokenResolver};
+use jomini::{BinaryFlavor, BinaryTape, BinaryToken, TextWriterBuilder, TokenResolver};
 use std::{
     collections::HashSet,
     io::{Cursor, Read},
@@ -58,13 +58,18 @@ impl Melter {
         self
     }
 
-    fn convert(
+    fn convert<Q>(
         &self,
         input: &[u8],
         writer: &mut Vec<u8>,
         unknown_tokens: &mut HashSet<u16>,
-    ) -> Result<(), ImperatorError> {
-        let tape = BinaryTape::parser_flavor(ImperatorFlavor).parse_slice(input)?;
+        resolver: &Q,
+    ) -> Result<(), ImperatorError>
+    where
+        Q: TokenResolver,
+    {
+        let flavor = ImperatorFlavor;
+        let tape = BinaryTape::from_slice(input)?;
         let mut wtr = TextWriterBuilder::new()
             .indent_char(b'\t')
             .indent_factor(1)
@@ -106,9 +111,9 @@ impl Melter {
                 BinaryToken::Unquoted(x) => {
                     wtr.write_unquoted(x.as_bytes())?;
                 }
-                BinaryToken::F32(x) => wtr.write_f32(*x)?,
-                BinaryToken::F64(x) => wtr.write_f64(*x)?,
-                BinaryToken::Token(x) => match TokenLookup.resolve(*x) {
+                BinaryToken::F32(x) => wtr.write_f32(flavor.visit_f32(*x))?,
+                BinaryToken::F64(x) => wtr.write_f64(flavor.visit_f64(*x))?,
+                BinaryToken::Token(x) => match resolver.resolve(*x) {
                     Some(id) if (self.rewrite && id == "is_ironman") && wtr.expecting_key() => {
                         let skip = tokens
                             .get(token_idx + 1)
@@ -169,9 +174,20 @@ impl Melter {
         Ok(())
     }
 
+    pub fn melt(&self, data: &[u8]) -> Result<(Vec<u8>, HashSet<u16>), ImperatorError> {
+        self.melt_with_tokens(data, &TokenLookup)
+    }
+
     /// Given one of the accepted inputs, this will return the save id line (if present in the input)
     /// with the gamestate data decoded from binary to plain text.
-    pub fn melt(&self, data: &[u8]) -> Result<(Vec<u8>, HashSet<u16>), ImperatorError> {
+    pub fn melt_with_tokens<Q>(
+        &self,
+        data: &[u8],
+        resolver: &Q,
+    ) -> Result<(Vec<u8>, HashSet<u16>), ImperatorError>
+    where
+        Q: TokenResolver,
+    {
         let mut result = Vec::with_capacity(data.len());
         let mut unknown_tokens = HashSet::new();
 
@@ -189,7 +205,9 @@ impl Melter {
 
         let mut reader = Cursor::new(data);
         match detect_encoding(&mut reader)? {
-            BodyEncoding::Plain => self.convert(data, &mut result, &mut unknown_tokens)?,
+            BodyEncoding::Plain => {
+                self.convert(data, &mut result, &mut unknown_tokens, resolver)?
+            }
             BodyEncoding::Zip(mut zip) => {
                 let size = zip
                     .by_name("gamestate")
@@ -207,7 +225,7 @@ impl Melter {
                         zip_file
                             .read_to_end(&mut inflated_data)
                             .map_err(|e| ImperatorErrorKind::ZipExtraction("gamestate", e))?;
-                        self.convert(&inflated_data, &mut result, &mut unknown_tokens)?
+                        self.convert(&inflated_data, &mut result, &mut unknown_tokens, resolver)?
                     }
 
                     #[cfg(feature = "mmap")]
@@ -215,7 +233,7 @@ impl Melter {
                         let mut mmap = memmap::MmapMut::map_anon(zip_file.size() as usize)?;
                         std::io::copy(&mut zip_file, &mut mmap.as_mut())
                             .map_err(|e| ImperatorErrorKind::ZipExtraction("gamestate", e))?;
-                        self.convert(&mmap[..], &mut result, &unknown_tokens)?
+                        self.convert(&mmap[..], &mut result, &unknown_tokens, resolver)?
                     }
                 }
             }

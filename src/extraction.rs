@@ -4,7 +4,7 @@ use crate::{
     tokens::TokenLookup,
     FailedResolveStrategy, ImperatorError, ImperatorErrorKind,
 };
-use jomini::{BinaryDeserializer, TextDeserializer, TextTape};
+use jomini::{BinaryDeserializer, TextDeserializer, TextTape, TokenResolver};
 use serde::de::{Deserialize, DeserializeOwned};
 use std::io::{Cursor, Read, Seek, SeekFrom};
 use zip::{result::ZipError, ZipArchive};
@@ -85,14 +85,16 @@ impl ImperatorExtractorBuilder {
     }
 
     /// Extract the header from the save as a custom type
-    pub fn extract_header_as<'de, T>(
+    pub fn extract_header_with_tokens_as<'de, T, Q>(
         &self,
         data: &'de [u8],
+        resolver: &'de Q,
     ) -> Result<(T, Encoding), ImperatorError>
     where
         T: Deserialize<'de>,
+        Q: TokenResolver,
     {
-        let data = skip_save_prefix(&data);
+        let data = skip_save_prefix(data);
         let mut cursor = Cursor::new(data);
         let offset = match detect_encoding(&mut cursor)? {
             BodyEncoding::Plain => data.len(),
@@ -103,7 +105,7 @@ impl ImperatorExtractorBuilder {
         if sniff_is_binary(data) {
             let res = BinaryDeserializer::builder_flavor(ImperatorFlavor)
                 .on_failed_resolve(self.on_failed_resolve)
-                .from_slice(data, &TokenLookup)?;
+                .from_slice(data, resolver)?;
             Ok((res, Encoding::Standard))
         } else {
             // allow uncompressed text as TextZip even though the game doesn't produce said format
@@ -112,18 +114,47 @@ impl ImperatorExtractorBuilder {
         }
     }
 
+    /// Extract the header from the save as a custom type
+    pub fn extract_header_as<'de, T>(
+        &self,
+        data: &'de [u8],
+    ) -> Result<(T, Encoding), ImperatorError>
+    where
+        T: Deserialize<'de>,
+    {
+        self.extract_header_with_tokens_as(data, &TokenLookup)
+    }
+
     /// Extract all info from a save
     pub fn extract_save<R>(&self, reader: R) -> Result<(Save, Encoding), ImperatorError>
     where
         R: Read + Seek,
     {
-        self.extract_save_as(reader)
+        self.extract_save_with_tokens(reader, &TokenLookup)
+    }
+
+    /// Extract all info from a save
+    pub fn extract_save_with_tokens<R, Q>(
+        &self,
+        reader: R,
+        resolver: &Q,
+    ) -> Result<(Save, Encoding), ImperatorError>
+    where
+        R: Read + Seek,
+        Q: TokenResolver,
+    {
+        self.extract_save_as(reader, resolver)
     }
 
     // todo, customize deserialize type
-    fn extract_save_as<R>(&self, mut reader: R) -> Result<(Save, Encoding), ImperatorError>
+    fn extract_save_as<R, Q>(
+        &self,
+        mut reader: R,
+        resolver: &Q,
+    ) -> Result<(Save, Encoding), ImperatorError>
     where
         R: Read + Seek,
+        Q: TokenResolver,
     {
         let mut buffer = Vec::new();
         match detect_encoding(&mut reader)? {
@@ -145,12 +176,16 @@ impl ImperatorExtractorBuilder {
             }
             BodyEncoding::Zip(mut zip) => {
                 let res = match self.extraction {
-                    Extraction::InMemory => {
-                        melt_in_memory(&mut buffer, "gamestate", &mut zip, self.on_failed_resolve)
-                    }
+                    Extraction::InMemory => melt_in_memory(
+                        &mut buffer,
+                        "gamestate",
+                        &mut zip,
+                        self.on_failed_resolve,
+                        resolver,
+                    ),
                     #[cfg(feature = "mmap")]
                     Extraction::MmapTemporaries => {
-                        melt_with_temporary("gamestate", &mut zip, self.on_failed_resolve)
+                        melt_with_temporary("gamestate", &mut zip, self.on_failed_resolve, resolver)
                     }
                 }?;
 
@@ -184,15 +219,17 @@ impl ImperatorExtractor {
     }
 }
 
-fn melt_in_memory<T, R>(
-    mut buffer: &mut Vec<u8>,
+fn melt_in_memory<T, R, Q>(
+    buffer: &mut Vec<u8>,
     name: &'static str,
     zip: &mut zip::ZipArchive<R>,
     on_failed_resolve: FailedResolveStrategy,
+    resolver: &Q,
 ) -> Result<T, ImperatorError>
 where
     R: Read + Seek,
     T: DeserializeOwned,
+    Q: TokenResolver,
 {
     buffer.clear();
     let mut zip_file = zip
@@ -206,12 +243,12 @@ where
 
     buffer.reserve(zip_file.size() as usize);
     zip_file
-        .read_to_end(&mut buffer)
+        .read_to_end(buffer)
         .map_err(|e| ImperatorErrorKind::ZipExtraction(name, e))?;
 
     let res = BinaryDeserializer::builder_flavor(ImperatorFlavor)
         .on_failed_resolve(on_failed_resolve)
-        .from_slice(buffer, &TokenLookup)
+        .from_slice(buffer, resolver)
         .map_err(|e| ImperatorErrorKind::Deserialize {
             part: Some(name.to_string()),
             err: e,
@@ -225,10 +262,12 @@ fn melt_with_temporary<T, R>(
     name: &'static str,
     zip: &mut zip::ZipArchive<R>,
     on_failed_resolve: FailedResolveStrategy,
+    resolver: &Q,
 ) -> Result<T, ImperatorError>
 where
     R: Read + Seek,
     T: DeserializeOwned,
+    Q: TokenResolver,
 {
     let mut zip_file = zip
         .by_name(name)
@@ -246,7 +285,7 @@ where
 
     let res = BinaryDeserializer::builder_flavor(ImperatorFlavor)
         .on_failed_resolve(on_failed_resolve)
-        .from_slice(buffer, &TokenLookup)
+        .from_slice(buffer, resolver)
         .map_err(|e| ImperatorErrorKind::Deserialize {
             part: Some(name.to_string()),
             err: e,

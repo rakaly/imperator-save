@@ -12,5 +12,5 @@ pub struct Save {
 
 #[derive(Debug, Deserialize)]
 pub struct GameState {
-    speed: i32,
+    pub speed: i32,
 }
