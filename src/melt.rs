@@ -106,7 +106,11 @@ impl Melter {
                     }
                 }
                 BinaryToken::Quoted(x) => {
-                    wtr.write_quoted(x.as_bytes())?;
+                    if wtr.expecting_key() {
+                        wtr.write_unquoted(x.as_bytes())?;
+                    } else {
+                        wtr.write_quoted(x.as_bytes())?;
+                    }
                 }
                 BinaryToken::Unquoted(x) => {
                     wtr.write_unquoted(x.as_bytes())?;
@@ -171,6 +175,7 @@ impl Melter {
             token_idx += 1;
         }
 
+        wtr.inner().push(b'\n');
         Ok(())
     }
 
