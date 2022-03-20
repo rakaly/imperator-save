@@ -1,3 +1,7 @@
+## v0.2.9 - 2022-03-20
+
+- Bump parser dependency to latest, no changes
+
 ## v0.2.8 - 2022-02-22
 
 - Expose token stringification customization with `_with_tokens` methods
