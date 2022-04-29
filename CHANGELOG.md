@@ -1,3 +1,7 @@
+## v0.2.10 - 2022-04-29
+
+- Update zip dependency to latest
+
 ## v0.2.9 - 2022-03-20
 
 - Bump parser dependency to latest, no changes
