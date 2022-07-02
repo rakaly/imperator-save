@@ -1,10 +1,13 @@
-use imperator_save::{ImperatorExtractor, PdsDate};
+use imperator_save::{models::MetadataBorrowed, EnvTokens, ImperatorFile, PdsDate};
 use std::env;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
     let data = std::fs::read(&args[1])?;
-    let (save, _encoding) = ImperatorExtractor::extract_header(&data[..])?;
-    print!("{}", save.date.game_fmt());
+    let file = ImperatorFile::from_slice(&data)?;
+    let mut zip_sink = Vec::new();
+    let file = file.parse(&mut zip_sink)?;
+    let meta: MetadataBorrowed = file.deserializer().build(&EnvTokens)?;
+    print!("{}", meta.date.game_fmt());
     Ok(())
 }

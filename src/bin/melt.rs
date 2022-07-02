@@ -1,15 +1,21 @@
+use imperator_save::{EnvTokens, FailedResolveStrategy, ImperatorFile};
 use std::env;
 use std::io::Write;
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
-    let file_data = std::fs::read(&args[1]).unwrap();
-    let (melted, _tokens) = imperator_save::Melter::new()
-        .with_on_failed_resolve(imperator_save::FailedResolveStrategy::Stringify)
-        .melt(&file_data[..])
-        .unwrap();
+    let data = std::fs::read(&args[1])?;
+    let file = ImperatorFile::from_slice(&data)?;
+    let mut zip_sink = Vec::new();
+    let file = file.parse(&mut zip_sink)?;
+    let binary = file.as_binary().unwrap();
+    let melted = binary
+        .melter()
+        .on_failed_resolve(FailedResolveStrategy::Error)
+        .melt(&EnvTokens)?;
 
     let stdout = std::io::stdout();
     let mut handle = stdout.lock();
-    handle.write_all(&melted[..]).unwrap();
+    let _ = handle.write_all(melted.data());
+    Ok(())
 }

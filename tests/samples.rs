@@ -1,5 +1,9 @@
 #![cfg(ironman)]
-use imperator_save::{Encoding, FailedResolveStrategy, ImperatorExtractor};
+use imperator_save::{
+    file::ImperatorFile,
+    models::{MetadataBorrowed, MetadataOwned, Save},
+    EnvTokens, FailedResolveStrategy, Encoding,
+};
 use std::io::{Cursor, Read};
 
 mod utils;
@@ -13,81 +17,90 @@ fn test_debug_save() {
     let mut buffer = Vec::with_capacity(0);
     zip_file.read_to_end(&mut buffer).unwrap();
 
-    let (save, encoding) = ImperatorExtractor::builder()
-        .with_on_failed_resolve(FailedResolveStrategy::Error)
-        .extract_header_owned(&buffer[..])
-        .unwrap();
-    assert_eq!(encoding, Encoding::Debug);
+    let file = ImperatorFile::from_slice(&buffer[..]).unwrap();
+    let parsed_metadata = file.parse_metadata().unwrap();
+    let save: MetadataOwned = parsed_metadata.deserializer().build(&EnvTokens).unwrap();
+
+    assert_eq!(file.encoding(), Encoding::Text);
     assert_eq!(save.version, String::from("1.4.2"));
 
-    let (save, encoding) = ImperatorExtractor::builder()
-        .with_on_failed_resolve(FailedResolveStrategy::Error)
-        .extract_header_borrowed(&buffer[..])
-        .unwrap();
-    assert_eq!(encoding, Encoding::Debug);
+    let save: MetadataBorrowed = parsed_metadata.deserializer().build(&EnvTokens).unwrap();
+    assert_eq!(file.encoding(), Encoding::Text);
     assert_eq!(save.version, String::from("1.4.2"));
 
-    let reader = Cursor::new(&buffer[..]);
-    let (save, encoding) = ImperatorExtractor::builder()
-        .with_on_failed_resolve(FailedResolveStrategy::Error)
-        .extract_save(reader)
-        .unwrap();
-    assert_eq!(encoding, Encoding::Debug);
-    assert_eq!(save.header.version, String::from("1.4.2"));
+    let mut zip_sink = Vec::new();
+    let parsed_file = file.parse(&mut zip_sink).unwrap();
+    let save = Save::from_deserializer(&parsed_file.deserializer(), &EnvTokens).unwrap();
+    assert_eq!(file.encoding(), Encoding::Text);
+    assert_eq!(save.meta.version, String::from("1.4.2"));
 }
 
 #[test]
 fn test_observer_save() {
     let data = utils::request("observer1.5.rome");
+    let file = ImperatorFile::from_slice(&data[..]).unwrap();
+    let parsed_metadata = file.parse_metadata().unwrap();
+    let save: MetadataOwned = parsed_metadata.deserializer().build(&EnvTokens).unwrap();
 
-    let (save, encoding) = ImperatorExtractor::builder()
-        .with_on_failed_resolve(FailedResolveStrategy::Error)
-        .extract_header_owned(&data[..])
-        .unwrap();
-    assert_eq!(encoding, Encoding::Standard);
+    assert_eq!(file.encoding(), Encoding::BinaryZip);
     assert_eq!(save.version, String::from("1.5.3"));
 
-    let (save, encoding) = ImperatorExtractor::builder()
-        .with_on_failed_resolve(FailedResolveStrategy::Error)
-        .extract_header_borrowed(&data[..])
-        .unwrap();
-    assert_eq!(encoding, Encoding::Standard);
+    let save: MetadataBorrowed = parsed_metadata.deserializer().build(&EnvTokens).unwrap();
+    assert_eq!(file.encoding(), Encoding::BinaryZip);
     assert_eq!(save.version, String::from("1.5.3"));
 
-    let reader = Cursor::new(&data[..]);
-    let (save, encoding) = ImperatorExtractor::builder()
-        .with_on_failed_resolve(FailedResolveStrategy::Error)
-        .extract_save(reader)
-        .unwrap();
-    assert_eq!(encoding, Encoding::Standard);
-    assert_eq!(save.header.version, String::from("1.5.3"));
+    let mut zip_sink = Vec::new();
+    let parsed_file = file.parse(&mut zip_sink).unwrap();
+    let save = Save::from_deserializer(
+        &parsed_file
+            .deserializer()
+            .on_failed_resolve(FailedResolveStrategy::Error),
+        &EnvTokens,
+    )
+    .unwrap();
+    assert_eq!(file.encoding(), Encoding::BinaryZip);
+    assert_eq!(save.meta.version, String::from("1.5.3"));
 }
 
 #[test]
 fn test_non_ascii_save() -> Result<(), Box<dyn std::error::Error>> {
     let data = utils::request("non-ascii.rome");
-    let reader = Cursor::new(&data[..]);
-    let (save, encoding) = ImperatorExtractor::builder()
-        .with_on_failed_resolve(FailedResolveStrategy::Error)
-        .extract_save(reader)?;
-    assert_eq!(encoding, Encoding::Standard);
-    assert_eq!(save.header.version, String::from("1.5.3"));
+    let file = ImperatorFile::from_slice(&data[..]).unwrap();
+    let mut zip_sink = Vec::new();
+    let parsed_file = file.parse(&mut zip_sink).unwrap();
+    let save = Save::from_deserializer(&parsed_file.deserializer(), &EnvTokens).unwrap();
+    assert_eq!(file.encoding(), Encoding::BinaryZip);
+    assert_eq!(save.meta.version, String::from("1.5.3"));
     Ok(())
 }
 
 #[test]
 fn test_roundtrip_header_melt() {
     let data = include_bytes!("fixtures/header");
-    let (out, _tokens) = imperator_save::Melter::new().melt(&data[..]).unwrap();
-    let (header, encoding) = ImperatorExtractor::extract_header(&out).unwrap();
-    assert_eq!(encoding, Encoding::Debug);
-    assert_eq!(header.version, String::from("1.5.3"));
+    let file = ImperatorFile::from_slice(&data[..]).unwrap();
+    let mut zip_sink = Vec::new();
+    let parsed_file = file.parse(&mut zip_sink).unwrap();
+    let binary = parsed_file.as_binary().unwrap();
+    let out = binary.melter().melt(&EnvTokens).unwrap();
+
+    let file = ImperatorFile::from_slice(out.data()).unwrap();
+    let mut zip_sink = Vec::new();
+    let parsed_file = file.parse(&mut zip_sink).unwrap();
+    let meta: MetadataOwned = parsed_file.deserializer().build(&EnvTokens).unwrap();
+
+    assert_eq!(file.encoding(), Encoding::Text);
+    assert_eq!(meta.version, String::from("1.5.3"));
 }
 
 #[test]
 fn test_header_melt() {
     let data = include_bytes!("fixtures/header");
     let melted = include_bytes!("fixtures/header.melted");
-    let (out, _tokens) = imperator_save::Melter::new().melt(&data[..]).unwrap();
-    assert_eq!(&melted[..], &out[..]);
+
+    let file = ImperatorFile::from_slice(&data[..]).unwrap();
+    let parsed_file = file.parse_metadata().unwrap();
+    let binary = parsed_file.as_binary().unwrap();
+    let out = binary.melter().melt(&EnvTokens).unwrap();
+
+    assert_eq!(&melted[..], out.data());
 }
