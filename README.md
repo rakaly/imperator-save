@@ -4,18 +4,19 @@
 
 Imperator Save is a library to ergonomically work with Imperator Rome saves (debug + standard).
 
-```rust,ignore
-use imperator_save::{ImperatorExtractor, Encoding};
-use std::io::Cursor;
+```rust
+use imperator_save::{ImperatorFile, Encoding, EnvTokens, models::Save};
 
 let data = std::fs::read("assets/saves/observer1.5.rome")?;
-let reader = Cursor::new(&data[..]);
-let (save, encoding) = ImperatorExtractor::extract_save(reader)?;
-assert_eq!(encoding, Encoding::Standard);
-assert_eq!(save.header.version, String::from("1.5.3"));
-```
+let file = ImperatorFile::from_slice(&data[..])?;
+assert_eq!(file.encoding(), Encoding::BinaryZip);
 
-`ImperatorExtractor` will deserialize standard Imperator saves as well as those saved saved with `-debug_mode` (plaintext).
+let mut zip_sink = Vec::new();
+let parsed_file = file.parse(&mut zip_sink)?;
+let save = Save::from_deserializer(&parsed_file.deserializer(), &EnvTokens)?;
+assert_eq!(save.meta.version, String::from("1.5.3"));
+assert_eq!(save.meta.version, String::from("1.5.3"));
+```
 
 ## Ironman
 

@@ -3,7 +3,7 @@ use serde::Deserialize;
 use std::borrow::Cow;
 
 #[derive(Debug, Deserialize)]
-pub struct HeaderOwned {
+pub struct MetadataOwned {
     pub save_game_version: i32,
     pub version: String,
     pub date: ImperatorDate,
@@ -17,7 +17,7 @@ pub struct HeaderOwned {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct HeaderBorrowed<'a> {
+pub struct MetadataBorrowed<'a> {
     pub save_game_version: i32,
     #[serde(borrow)]
     pub version: Cow<'a, str>,

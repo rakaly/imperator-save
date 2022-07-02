@@ -12,22 +12,16 @@ keywords = ["imperator", "ironman"]
 categories = ["parsing"]
 
 [features]
-mmap = ['memmap']
 serialize = []
 
 [dependencies]
-jomini = "0.18"
+jomini = { version =  "0.19", features = ["json"] }
 zip = { version =  "0.6", default-features = false, features = ["deflate"] }
 serde = { version = "1", features = ["derive"] }
-memmap = { version = "0.7", optional = true }
+thiserror = "1"
 
 [dev-dependencies]
 attohttpc = "0.19"
-criterion = "0.3"
-
-[[bench]]
-name = "imperator_save_bench"
-harness = false
 
 # We override the test profile so that our tests run in a tolerable time as
 # some of the asset files are heavyweight and can take a significant amount of
