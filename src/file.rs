@@ -1,5 +1,6 @@
 use crate::{
-    flavor::ImperatorFlavor, ImperatorError, ImperatorErrorKind, ImperatorMelter, SaveHeader, Encoding,
+    flavor::ImperatorFlavor, Encoding, ImperatorError, ImperatorErrorKind, ImperatorMelter,
+    SaveHeader,
 };
 use jomini::{
     binary::{BinaryDeserializerBuilder, FailedResolveStrategy, TokenResolver},
@@ -7,14 +8,14 @@ use jomini::{
     BinaryDeserializer, BinaryTape, TextDeserializer, TextTape, Utf8Encoding,
 };
 use serde::Deserialize;
-use std::io::{Cursor, Read};
-use zip::{read::ZipFile, result::ZipError};
+use std::io::Cursor;
+use zip::result::ZipError;
 
 enum FileKind<'a> {
     Text(&'a [u8]),
     Binary(&'a [u8]),
     Zip {
-        archive: zip::ZipArchive<Cursor<&'a [u8]>>,
+        archive: ImperatorZipFiles<'a>,
         metadata: &'a [u8],
         gamestate: VerifiedIndex,
         is_text: bool,
@@ -37,9 +38,9 @@ impl<'a> ImperatorFile<'a> {
 
         let reader = Cursor::new(data);
         match zip::ZipArchive::new(reader) {
-            Ok(zip) => {
+            Ok(mut zip) => {
                 let metadata = &data[..zip.offset() as usize];
-                let files = ImperatorZipFiles::new(zip);
+                let files = ImperatorZipFiles::new(&mut zip, data);
                 let gamestate_idx = files
                     .gamestate_index()
                     .ok_or(ImperatorErrorKind::ZipMissingEntry)?;
@@ -48,7 +49,7 @@ impl<'a> ImperatorFile<'a> {
                 Ok(ImperatorFile {
                     header,
                     kind: FileKind::Zip {
-                        archive: files.into_zip(),
+                        archive: files,
                         gamestate: gamestate_idx,
                         metadata,
                         is_text,
@@ -163,9 +164,8 @@ impl<'a> ImperatorFile<'a> {
                 is_text,
                 ..
             } => {
-                let mut zip = ImperatorZipFiles::new(archive.clone());
-                zip_sink.reserve(gamestate.size);
-                zip.retrieve_file(*gamestate).read_to_end(zip_sink)?;
+                let zip = archive.retrieve_file(*gamestate);
+                zip.read_to_end(zip_sink)?;
 
                 if *is_text {
                     let text = ImperatorText::from_raw(zip_sink)?;
@@ -234,69 +234,72 @@ impl<'a> ImperatorParsedFile<'a> {
 
 #[derive(Debug, Clone, Copy)]
 struct VerifiedIndex {
-    index: usize,
+    data_start: usize,
+    data_end: usize,
     size: usize,
 }
 
 #[derive(Debug, Clone)]
 struct ImperatorZipFiles<'a> {
-    archive: zip::ZipArchive<Cursor<&'a [u8]>>,
+    archive: &'a [u8],
     gamestate_index: Option<VerifiedIndex>,
 }
 
 impl<'a> ImperatorZipFiles<'a> {
-    pub fn new(mut archive: zip::ZipArchive<Cursor<&'a [u8]>>) -> Self {
+    pub fn new(archive: &mut zip::ZipArchive<Cursor<&'a [u8]>>, data: &'a [u8]) -> Self {
         let mut gamestate_index = None;
 
         for index in 0..archive.len() {
-            if let Ok(file) = archive.by_index(index) {
+            if let Ok(file) = archive.by_index_raw(index) {
                 let size = file.size() as usize;
+                let data_start = file.data_start() as usize;
+                let data_end = data_start + file.compressed_size() as usize;
+
                 if file.name() == "gamestate" {
-                    gamestate_index = Some(VerifiedIndex { index, size })
+                    gamestate_index = Some(VerifiedIndex {
+                        data_start,
+                        data_end,
+                        size,
+                    })
                 }
             }
         }
 
         Self {
-            archive,
+            archive: data,
             gamestate_index,
         }
     }
 
-    pub fn retrieve_file(&mut self, index: VerifiedIndex) -> ImperatorZipFile {
-        let file = self.archive.by_index(index.index).unwrap();
-        ImperatorZipFile { file }
+    pub fn retrieve_file(&self, index: VerifiedIndex) -> ImperatorZipFile {
+        let raw = &self.archive[index.data_start..index.data_end];
+        ImperatorZipFile {
+            raw,
+            size: index.size,
+        }
     }
 
     pub fn gamestate_index(&self) -> Option<VerifiedIndex> {
         self.gamestate_index
     }
-
-    pub fn into_zip(self) -> zip::ZipArchive<Cursor<&'a [u8]>> {
-        self.archive
-    }
 }
 
 struct ImperatorZipFile<'a> {
-    file: ZipFile<'a>,
+    raw: &'a [u8],
+    size: usize,
 }
 
 impl<'a> ImperatorZipFile<'a> {
-    fn internal_read_to_end(&mut self, buf: &mut Vec<u8>) -> std::io::Result<usize> {
-        buf.reserve(self.size());
-        self.file.read_to_end(buf)
-    }
-
-    pub fn read_to_end(&mut self, buf: &mut Vec<u8>) -> Result<usize, ImperatorError> {
-        let res = self
-            .internal_read_to_end(buf)
-            .map_err(|e| ImperatorErrorKind::ZipInflation { source: e })?;
-
-        Ok(res)
+    pub fn read_to_end(&self, buf: &mut Vec<u8>) -> Result<(), ImperatorError> {
+        let start_len = buf.len();
+        buf.resize(start_len + self.size(), 0);
+        let body = &mut buf[start_len..];
+        crate::deflate::inflate_exact(self.raw, body).map_err(ImperatorErrorKind::from)?;
+        Ok(())
     }
 
     pub fn size(&self) -> usize {
-        self.file.size() as usize
+        self.size
     }
 }
 

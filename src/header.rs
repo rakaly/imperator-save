@@ -79,7 +79,7 @@ impl SaveHeaderKind {
 }
 
 /// The first line of the save file
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SaveHeader {
     unknown: [u8; 2],
     kind: SaveHeaderKind,

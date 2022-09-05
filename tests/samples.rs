@@ -2,7 +2,7 @@
 use imperator_save::{
     file::ImperatorFile,
     models::{MetadataBorrowed, MetadataOwned, Save},
-    EnvTokens, FailedResolveStrategy, Encoding,
+    Encoding, EnvTokens, FailedResolveStrategy,
 };
 use std::io::{Cursor, Read};
 

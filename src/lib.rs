@@ -35,6 +35,7 @@ tokens. I am also restricted from divulging how the list of tokens can be derive
 */
 
 mod date;
+mod deflate;
 mod errors;
 mod extraction;
 pub mod file;
