@@ -1,3 +1,9 @@
+## v0.4.0 - 2022-09-12
+
+- Bump to edition 2021
+- Add default more efficient miniz inflation
+- Add libdeflate inflation feature
+
 ## v0.3.1 - 2022-07-08
 
 - Empty IMPERATOR_TOKENS is same as unset
