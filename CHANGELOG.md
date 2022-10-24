@@ -1,3 +1,8 @@
+## v0.4.2 - 2022-10-24
+
+- Update jomini parser to 0.20
+- Update libdeflater to 0.11
+
 ## v0.4.1 - 2022-09-12
 
 - Allow ownership transfer of melted output
