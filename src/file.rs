@@ -3,7 +3,7 @@ use crate::{
     SaveHeader,
 };
 use jomini::{
-    binary::{BinaryDeserializerBuilder, FailedResolveStrategy, TokenResolver},
+    binary::{FailedResolveStrategy, TokenResolver},
     text::ObjectReader,
     BinaryDeserializer, BinaryTape, TextDeserializer, TextTape, Utf8Encoding,
 };
@@ -225,13 +225,16 @@ impl<'a> ImperatorParsedFile<'a> {
     }
 
     /// Prepares the file for deserialization into a custom structure
-    pub fn deserializer(&self) -> ImperatorDeserializer {
+    pub fn deserializer<'b, RES>(&'b self, resolver: &'b RES) -> ImperatorDeserializer<RES>
+    where
+        RES: TokenResolver,
+    {
         match &self.kind {
             ImperatorParsedFileKind::Text(x) => ImperatorDeserializer {
                 kind: ImperatorDeserializerKind::Text(x),
             },
             ImperatorParsedFileKind::Binary(x) => ImperatorDeserializer {
-                kind: ImperatorDeserializerKind::Binary(x.deserializer()),
+                kind: ImperatorDeserializerKind::Binary(x.deserializer(resolver)),
             },
         }
     }
@@ -332,52 +335,63 @@ impl<'a> ImperatorText<'a> {
     where
         T: Deserialize<'a>,
     {
-        let result = TextDeserializer::from_utf8_tape(&self.tape)
+        let deser = TextDeserializer::from_utf8_tape(&self.tape);
+        let result = deser
+            .deserialize()
             .map_err(ImperatorErrorKind::Deserialize)?;
         Ok(result)
     }
 }
 
 /// A parsed Imperator binary document
-pub struct ImperatorBinary<'a> {
-    tape: BinaryTape<'a>,
+pub struct ImperatorBinary<'data> {
+    tape: BinaryTape<'data>,
     header: SaveHeader,
 }
 
-impl<'a> ImperatorBinary<'a> {
-    pub fn from_slice(data: &'a [u8]) -> Result<Self, ImperatorError> {
+impl<'data> ImperatorBinary<'data> {
+    pub fn from_slice(data: &'data [u8]) -> Result<Self, ImperatorError> {
         let header = SaveHeader::from_slice(data)?;
         Self::from_raw(&data[..header.header_len()], header)
     }
 
-    pub(crate) fn from_raw(data: &'a [u8], header: SaveHeader) -> Result<Self, ImperatorError> {
+    pub(crate) fn from_raw(data: &'data [u8], header: SaveHeader) -> Result<Self, ImperatorError> {
         let tape = BinaryTape::from_slice(data).map_err(ImperatorErrorKind::Parse)?;
         Ok(ImperatorBinary { tape, header })
     }
 
-    pub fn deserializer<'b>(&'b self) -> ImperatorBinaryDeserializer<'a, 'b> {
+    pub fn deserializer<'b, RES>(
+        &'b self,
+        resolver: &'b RES,
+    ) -> ImperatorBinaryDeserializer<'data, 'b, RES>
+    where
+        RES: TokenResolver,
+    {
         ImperatorBinaryDeserializer {
-            builder: BinaryDeserializer::builder_flavor(ImperatorFlavor),
-            tape: &self.tape,
+            deser: BinaryDeserializer::builder_flavor(ImperatorFlavor)
+                .from_tape(&self.tape, resolver),
         }
     }
 
-    pub fn melter<'b>(&'b self) -> ImperatorMelter<'a, 'b> {
+    pub fn melter<'b>(&'b self) -> ImperatorMelter<'data, 'b> {
         ImperatorMelter::new(&self.tape, &self.header)
     }
 }
 
-enum ImperatorDeserializerKind<'a, 'b> {
-    Text(&'b ImperatorText<'a>),
-    Binary(ImperatorBinaryDeserializer<'a, 'b>),
+enum ImperatorDeserializerKind<'data, 'tape, RES> {
+    Text(&'tape ImperatorText<'data>),
+    Binary(ImperatorBinaryDeserializer<'data, 'tape, RES>),
 }
 
 /// A deserializer for custom structures
-pub struct ImperatorDeserializer<'a, 'b> {
-    kind: ImperatorDeserializerKind<'a, 'b>,
+pub struct ImperatorDeserializer<'data, 'tape, RES> {
+    kind: ImperatorDeserializerKind<'data, 'tape, RES>,
 }
 
-impl<'a, 'b> ImperatorDeserializer<'a, 'b> {
+impl<'data, 'tape, RES> ImperatorDeserializer<'data, 'tape, RES>
+where
+    RES: TokenResolver,
+{
     pub fn on_failed_resolve(&mut self, strategy: FailedResolveStrategy) -> &mut Self {
         if let ImperatorDeserializerKind::Binary(x) = &mut self.kind {
             x.on_failed_resolve(strategy);
@@ -385,47 +399,44 @@ impl<'a, 'b> ImperatorDeserializer<'a, 'b> {
         self
     }
 
-    pub fn build<T, R>(&self, resolver: &'a R) -> Result<T, ImperatorError>
+    pub fn deserialize<T>(&self) -> Result<T, ImperatorError>
     where
-        R: TokenResolver,
-        T: Deserialize<'a>,
+        T: Deserialize<'data>,
     {
         match &self.kind {
             ImperatorDeserializerKind::Text(x) => x.deserialize(),
-            ImperatorDeserializerKind::Binary(x) => x.build(resolver),
+            ImperatorDeserializerKind::Binary(x) => x.deserialize(),
         }
     }
 }
 
 /// Deserializes binary data into custom structures
-pub struct ImperatorBinaryDeserializer<'a, 'b> {
-    builder: BinaryDeserializerBuilder<ImperatorFlavor>,
-    tape: &'b BinaryTape<'a>,
+pub struct ImperatorBinaryDeserializer<'data, 'tape, RES> {
+    deser: BinaryDeserializer<'tape, 'data, 'tape, RES, ImperatorFlavor>,
 }
 
-impl<'a, 'b> ImperatorBinaryDeserializer<'a, 'b> {
+impl<'data, 'tape, RES> ImperatorBinaryDeserializer<'data, 'tape, RES>
+where
+    RES: TokenResolver,
+{
     pub fn on_failed_resolve(&mut self, strategy: FailedResolveStrategy) -> &mut Self {
-        self.builder.on_failed_resolve(strategy);
+        self.deser.on_failed_resolve(strategy);
         self
     }
 
-    pub fn build<T, R>(&self, resolver: &'a R) -> Result<T, ImperatorError>
+    pub fn deserialize<T>(&self) -> Result<T, ImperatorError>
     where
-        R: TokenResolver,
-        T: Deserialize<'a>,
+        T: Deserialize<'data>,
     {
-        let result = self
-            .builder
-            .from_tape(self.tape, resolver)
-            .map_err(|e| match e.kind() {
-                jomini::ErrorKind::Deserialize(e2) => match e2.kind() {
-                    &jomini::DeserializeErrorKind::UnknownToken { token_id } => {
-                        ImperatorErrorKind::UnknownToken { token_id }
-                    }
-                    _ => ImperatorErrorKind::Deserialize(e),
-                },
+        let result = self.deser.deserialize().map_err(|e| match e.kind() {
+            jomini::ErrorKind::Deserialize(e2) => match e2.kind() {
+                &jomini::DeserializeErrorKind::UnknownToken { token_id } => {
+                    ImperatorErrorKind::UnknownToken { token_id }
+                }
                 _ => ImperatorErrorKind::Deserialize(e),
-            })?;
+            },
+            _ => ImperatorErrorKind::Deserialize(e),
+        })?;
         Ok(result)
     }
 }

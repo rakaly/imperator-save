@@ -9,15 +9,14 @@ pub struct Save {
 }
 
 impl Save {
-    pub fn from_deserializer<R>(
-        deser: &ImperatorDeserializer,
-        resolver: &R,
+    pub fn from_deserializer<RES>(
+        deser: &ImperatorDeserializer<RES>,
     ) -> Result<Self, ImperatorError>
     where
-        R: TokenResolver,
+        RES: TokenResolver,
     {
-        let meta = deser.build(resolver)?;
-        let gamestate = deser.build(resolver)?;
+        let meta = deser.deserialize()?;
+        let gamestate = deser.deserialize()?;
         Ok(Save { meta, gamestate })
     }
 }

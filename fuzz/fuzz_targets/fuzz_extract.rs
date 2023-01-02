@@ -9,7 +9,7 @@ fn run(data: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
     let file = imperator_save::ImperatorFile::from_slice(&data)?;
 
     let meta = file.parse_metadata()?;
-    let _meta: Result<MetadataOwned, _> = meta.deserializer().build(&EnvTokens);
+    let _meta: Result<MetadataOwned, _> = meta.deserializer(&EnvTokens).deserialize();
 
     let mut zip_sink = Vec::new();
     let parsed_file = file.parse(&mut zip_sink)?;
@@ -23,7 +23,7 @@ fn run(data: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let _game = Save::from_deserializer(&parsed_file.deserializer(), &EnvTokens);
+    let _game = Save::from_deserializer(&parsed_file.deserializer(&EnvTokens));
 
     Ok(())
 }

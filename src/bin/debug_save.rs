@@ -7,7 +7,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let file = ImperatorFile::from_slice(&data)?;
     let mut zip_sink = Vec::new();
     let file = file.parse(&mut zip_sink)?;
-    let meta: MetadataBorrowed = file.deserializer().build(&EnvTokens)?;
+    let meta: MetadataBorrowed = file.deserializer(&EnvTokens).deserialize()?;
     print!("{}", meta.date.game_fmt());
     Ok(())
 }
