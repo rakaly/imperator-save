@@ -8,7 +8,7 @@ use libfuzzer_sys::fuzz_target;
 fn run(data: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
     let file = imperator_save::ImperatorFile::from_slice(&data)?;
 
-    let meta = file.parse_metadata()?;
+    let meta = file.meta().parse()?;
     let _meta: Result<MetadataOwned, _> = meta.deserializer(&EnvTokens).deserialize();
 
     let mut zip_sink = Vec::new();

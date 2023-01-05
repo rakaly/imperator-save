@@ -18,7 +18,8 @@ fn test_debug_save() {
     zip_file.read_to_end(&mut buffer).unwrap();
 
     let file = ImperatorFile::from_slice(&buffer[..]).unwrap();
-    let parsed_metadata = file.parse_metadata().unwrap();
+    let meta = file.meta();
+    let parsed_metadata = meta.parse().unwrap();
     let save: MetadataOwned = parsed_metadata
         .deserializer(&EnvTokens)
         .deserialize()
@@ -45,7 +46,8 @@ fn test_debug_save() {
 fn test_observer_save() {
     let data = utils::request("observer1.5.rome");
     let file = ImperatorFile::from_slice(&data[..]).unwrap();
-    let parsed_metadata = file.parse_metadata().unwrap();
+    let meta = file.meta();
+    let parsed_metadata = meta.parse().unwrap();
     let save: MetadataOwned = parsed_metadata
         .deserializer(&EnvTokens)
         .deserialize()
@@ -109,7 +111,8 @@ fn test_header_melt() {
     let melted = include_bytes!("fixtures/header.melted");
 
     let file = ImperatorFile::from_slice(&data[..]).unwrap();
-    let parsed_file = file.parse_metadata().unwrap();
+    let meta = file.meta();
+    let parsed_file = meta.parse().unwrap();
     let binary = parsed_file.as_binary().unwrap();
     let out = binary.melter().melt(&EnvTokens).unwrap();
 

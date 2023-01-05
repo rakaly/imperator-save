@@ -98,7 +98,7 @@ impl<'a> ImperatorFile<'a> {
         }
     }
 
-    pub fn parse_metadata(&self) -> Result<ImperatorParsedFile<'a>, ImperatorError> {
+    pub fn meta(&self) -> ImperatorMeta<'a> {
         match &self.kind {
             FileKind::Text(x) => {
                 // The metadata section should be way smaller than the total
@@ -113,32 +113,30 @@ impl<'a> ImperatorFile<'a> {
                     &x[..len.min(x.len())]
                 };
 
-                let text = ImperatorText::from_raw(data)?;
-                Ok(ImperatorParsedFile {
-                    kind: ImperatorParsedFileKind::Text(text),
-                })
+                ImperatorMeta {
+                    kind: ImperatorMetaKind::Text(data),
+                    header: self.header.clone(),
+                }
             }
             FileKind::Binary(x) => {
                 let metadata = x.get(..self.header.metadata_len() as usize).unwrap_or(x);
-                let binary = ImperatorBinary::from_raw(metadata, self.header.clone())?;
-                Ok(ImperatorParsedFile {
-                    kind: ImperatorParsedFileKind::Binary(binary),
-                })
+                ImperatorMeta {
+                    kind: ImperatorMetaKind::Binary(metadata),
+                    header: self.header.clone(),
+                }
             }
             FileKind::Zip {
-                metadata, is_text, ..
-            } if *is_text => {
-                let text = ImperatorText::from_raw(metadata)?;
-                Ok(ImperatorParsedFile {
-                    kind: ImperatorParsedFileKind::Text(text),
-                })
-            }
-            FileKind::Zip { metadata, .. } => {
-                let binary = ImperatorBinary::from_raw(metadata, self.header.clone())?;
-                Ok(ImperatorParsedFile {
-                    kind: ImperatorParsedFileKind::Binary(binary),
-                })
-            }
+                metadata,
+                is_text: true,
+                ..
+            } => ImperatorMeta {
+                kind: ImperatorMetaKind::Text(metadata),
+                header: self.header.clone(),
+            },
+            FileKind::Zip { metadata, .. } => ImperatorMeta {
+                kind: ImperatorMetaKind::Binary(metadata),
+                header: self.header.clone(),
+            },
         }
     }
 
@@ -183,6 +181,46 @@ impl<'a> ImperatorFile<'a> {
                         kind: ImperatorParsedFileKind::Binary(binary),
                     })
                 }
+            }
+        }
+    }
+}
+
+/// Holds the metadata section of the save
+#[derive(Debug)]
+pub struct ImperatorMeta<'a> {
+    kind: ImperatorMetaKind<'a>,
+    header: SaveHeader,
+}
+
+/// Describes the format of the metadata section of the save
+#[derive(Debug)]
+pub enum ImperatorMetaKind<'a> {
+    Text(&'a [u8]),
+    Binary(&'a [u8]),
+}
+
+impl<'a> ImperatorMeta<'a> {
+    pub fn header(&self) -> &SaveHeader {
+        &self.header
+    }
+
+    pub fn kind(&self) -> &ImperatorMetaKind {
+        &self.kind
+    }
+
+    pub fn parse(&self) -> Result<ImperatorParsedFile<'a>, ImperatorError> {
+        match self.kind {
+            ImperatorMetaKind::Text(x) => {
+                ImperatorText::from_raw(x).map(|kind| ImperatorParsedFile {
+                    kind: ImperatorParsedFileKind::Text(kind),
+                })
+            }
+
+            ImperatorMetaKind::Binary(x) => {
+                ImperatorBinary::from_raw(x, self.header.clone()).map(|kind| ImperatorParsedFile {
+                    kind: ImperatorParsedFileKind::Binary(kind),
+                })
             }
         }
     }
