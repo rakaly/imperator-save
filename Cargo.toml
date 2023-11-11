@@ -21,12 +21,12 @@ serialize = []
 jomini = { version =  "0.23", features = ["json"] }
 zip = { version =  "0.6", default-features = false }
 serde = { version = "1", features = ["derive"] }
-libdeflater = { version = "0.11", optional = true }
-miniz_oxide = { version = "0.6", optional = true }
+libdeflater = { version = "1.19", optional = true }
+miniz_oxide = { version = "0.7", optional = true }
 thiserror = "1"
 
 [dev-dependencies]
-attohttpc = "0.23"
+attohttpc = "0.26"
 zip = { version =  "0.6", default-features = false, features = ["deflate"] }
 
 # We override the test profile so that our tests run in a tolerable time as
