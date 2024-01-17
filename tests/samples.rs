@@ -76,6 +76,38 @@ fn test_observer_save() {
 }
 
 #[test]
+fn test_observer_melt() {
+    let melt = utils::request("observer1.5_melted.rome.zip");
+    let reader = Cursor::new(melt.as_slice());
+    let mut zip = zip::ZipArchive::new(reader).unwrap();
+    let mut file = zip.by_index(0).unwrap();
+    let mut melted = Vec::new();
+    file.read_to_end(&mut melted).unwrap();
+
+    let data = utils::request("observer1.5.rome");
+    let file = ImperatorFile::from_slice(&data[..]).unwrap();
+
+    let mut zip_sink = Vec::new();
+    let parsed_file = file.parse(&mut zip_sink).unwrap();
+    let binary = parsed_file.as_binary().unwrap();
+    let out = binary.melter().melt(&EnvTokens).unwrap();
+    assert!(
+        eq(out.data(), out.data()),
+        "patch 1.5 did not melt currently"
+    );
+}
+
+fn eq(a: &[u8], b: &[u8]) -> bool {
+    for (ai, bi) in a.iter().zip(b.iter()) {
+        if ai != bi {
+            return false;
+        }
+    }
+
+    a.len() == b.len()
+}
+
+#[test]
 fn test_non_ascii_save() -> Result<(), Box<dyn std::error::Error>> {
     let data = utils::request("non-ascii.rome");
     let file = ImperatorFile::from_slice(&data[..]).unwrap();
