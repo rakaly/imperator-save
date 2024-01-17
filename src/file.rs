@@ -11,15 +11,18 @@ use serde::Deserialize;
 use std::io::Cursor;
 use zip::result::ZipError;
 
+#[derive(Clone, Debug)]
+pub(crate) struct ImperatorZip<'a> {
+    pub(crate) archive: ImperatorZipFiles<'a>,
+    pub(crate) metadata: &'a [u8],
+    pub(crate) gamestate: VerifiedIndex,
+    pub(crate) is_text: bool,
+}
+
 enum FileKind<'a> {
     Text(&'a [u8]),
     Binary(&'a [u8]),
-    Zip {
-        archive: ImperatorZipFiles<'a>,
-        metadata: &'a [u8],
-        gamestate: VerifiedIndex,
-        is_text: bool,
-    },
+    Zip(ImperatorZip<'a>),
 }
 
 /// Entrypoint for parsing Imperator saves
@@ -48,12 +51,12 @@ impl<'a> ImperatorFile<'a> {
                 let is_text = !header.kind().is_binary();
                 Ok(ImperatorFile {
                     header,
-                    kind: FileKind::Zip {
+                    kind: FileKind::Zip(ImperatorZip {
                         archive: files,
                         gamestate: gamestate_idx,
                         metadata,
                         is_text,
-                    },
+                    }),
                 })
             }
             Err(ZipError::InvalidArchive(_)) => {
@@ -83,8 +86,8 @@ impl<'a> ImperatorFile<'a> {
         match &self.kind {
             FileKind::Text(_) => Encoding::Text,
             FileKind::Binary(_) => Encoding::Binary,
-            FileKind::Zip { is_text: true, .. } => Encoding::TextZip,
-            FileKind::Zip { is_text: false, .. } => Encoding::BinaryZip,
+            FileKind::Zip(ImperatorZip { is_text: true, .. }) => Encoding::TextZip,
+            FileKind::Zip(ImperatorZip { is_text: false, .. }) => Encoding::BinaryZip,
         }
     }
 
@@ -94,7 +97,7 @@ impl<'a> ImperatorFile<'a> {
     pub fn size(&self) -> usize {
         match &self.kind {
             FileKind::Text(x) | FileKind::Binary(x) => x.len(),
-            FileKind::Zip { gamestate, .. } => gamestate.size,
+            FileKind::Zip(ImperatorZip { gamestate, .. }) => gamestate.size,
         }
     }
 
@@ -125,15 +128,15 @@ impl<'a> ImperatorFile<'a> {
                     header: self.header.clone(),
                 }
             }
-            FileKind::Zip {
+            FileKind::Zip(ImperatorZip {
                 metadata,
                 is_text: true,
                 ..
-            } => ImperatorMeta {
+            }) => ImperatorMeta {
                 kind: ImperatorMetaKind::Text(metadata),
                 header: self.header.clone(),
             },
-            FileKind::Zip { metadata, .. } => ImperatorMeta {
+            FileKind::Zip(ImperatorZip { metadata, .. }) => ImperatorMeta {
                 kind: ImperatorMetaKind::Binary(metadata),
                 header: self.header.clone(),
             },
@@ -161,12 +164,12 @@ impl<'a> ImperatorFile<'a> {
                     kind: ImperatorParsedFileKind::Binary(binary),
                 })
             }
-            FileKind::Zip {
+            FileKind::Zip(ImperatorZip {
                 archive,
                 gamestate,
                 is_text,
                 ..
-            } => {
+            }) => {
                 let zip = archive.retrieve_file(*gamestate);
                 zip.read_to_end(zip_sink)?;
 
@@ -182,6 +185,14 @@ impl<'a> ImperatorFile<'a> {
                     })
                 }
             }
+        }
+    }
+
+    pub fn melter(&self) -> ImperatorMelter<'a> {
+        match &self.kind {
+            FileKind::Text(x) => ImperatorMelter::new_text(x, self.header.clone()),
+            FileKind::Binary(x) => ImperatorMelter::new_binary(x, self.header.clone()),
+            FileKind::Zip(x) => ImperatorMelter::new_zip((*x).clone(), self.header.clone()),
         }
     }
 }
@@ -222,6 +233,13 @@ impl<'a> ImperatorMeta<'a> {
                     kind: ImperatorParsedFileKind::Binary(kind),
                 })
             }
+        }
+    }
+
+    pub fn melter(&self) -> ImperatorMelter<'a> {
+        match self.kind {
+            ImperatorMetaKind::Text(x) => ImperatorMelter::new_text(x, self.header.clone()),
+            ImperatorMetaKind::Binary(x) => ImperatorMelter::new_binary(x, self.header.clone()),
         }
     }
 }
@@ -279,14 +297,14 @@ impl<'a> ImperatorParsedFile<'a> {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct VerifiedIndex {
+pub(crate) struct VerifiedIndex {
     data_start: usize,
     data_end: usize,
     size: usize,
 }
 
 #[derive(Debug, Clone)]
-struct ImperatorZipFiles<'a> {
+pub(crate) struct ImperatorZipFiles<'a> {
     archive: &'a [u8],
     gamestate_index: Option<VerifiedIndex>,
 }
@@ -330,7 +348,7 @@ impl<'a> ImperatorZipFiles<'a> {
     }
 }
 
-struct ImperatorZipFile<'a> {
+pub(crate) struct ImperatorZipFile<'a> {
     raw: &'a [u8],
     size: usize,
 }
@@ -342,6 +360,10 @@ impl<'a> ImperatorZipFile<'a> {
         let body = &mut buf[start_len..];
         crate::deflate::inflate_exact(self.raw, body).map_err(ImperatorErrorKind::from)?;
         Ok(())
+    }
+
+    pub fn reader(&self) -> crate::deflate::DeflateReader<'a> {
+        crate::deflate::DeflateReader::new(self.raw, crate::deflate::CompressionMethod::Deflate)
     }
 
     pub fn size(&self) -> usize {
@@ -384,6 +406,7 @@ impl<'a> ImperatorText<'a> {
 /// A parsed Imperator binary document
 pub struct ImperatorBinary<'data> {
     tape: BinaryTape<'data>,
+    #[allow(dead_code)]
     header: SaveHeader,
 }
 
@@ -409,10 +432,6 @@ impl<'data> ImperatorBinary<'data> {
             deser: BinaryDeserializer::builder_flavor(ImperatorFlavor)
                 .from_tape(&self.tape, resolver),
         }
-    }
-
-    pub fn melter<'b>(&'b self) -> ImperatorMelter<'data, 'b> {
-        ImperatorMelter::new(&self.tape, &self.header)
     }
 }
 

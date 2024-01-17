@@ -1,4 +1,6 @@
 use crate::deflate::ZipInflationError;
+use jomini::binary;
+use std::io;
 use zip::result::ZipError;
 
 /// A Imperator Error
@@ -52,6 +54,9 @@ pub enum ImperatorErrorKind {
 
     #[error("invalid header")]
     InvalidHeader,
+
+    #[error("io error: {0}")]
+    Io(#[from] io::Error),
 }
 
 impl From<ZipInflationError> for ImperatorErrorKind {
@@ -60,6 +65,38 @@ impl From<ZipInflationError> for ImperatorErrorKind {
             ZipInflationError::BadData { msg } => ImperatorErrorKind::ZipBadData { msg },
             ZipInflationError::EarlyEof { written } => ImperatorErrorKind::ZipEarlyEof { written },
         }
+    }
+}
+
+impl From<jomini::Error> for ImperatorError {
+    fn from(value: jomini::Error) -> Self {
+        let kind = if matches!(value.kind(), jomini::ErrorKind::Deserialize(_)) {
+            match value.into_kind() {
+                jomini::ErrorKind::Deserialize(x) => match x.kind() {
+                    &jomini::DeserializeErrorKind::UnknownToken { token_id } => {
+                        ImperatorErrorKind::UnknownToken { token_id }
+                    }
+                    _ => ImperatorErrorKind::Deserialize(x.into()),
+                },
+                _ => unreachable!(),
+            }
+        } else {
+            ImperatorErrorKind::Parse(value)
+        };
+
+        ImperatorError::new(kind)
+    }
+}
+
+impl From<io::Error> for ImperatorError {
+    fn from(value: io::Error) -> Self {
+        ImperatorError::from(ImperatorErrorKind::from(value))
+    }
+}
+
+impl From<binary::ReaderError> for ImperatorError {
+    fn from(value: binary::ReaderError) -> Self {
+        Self::from(jomini::Error::from(value))
     }
 }
 

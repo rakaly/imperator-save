@@ -86,13 +86,10 @@ fn test_observer_melt() {
 
     let data = utils::request("observer1.5.rome");
     let file = ImperatorFile::from_slice(&data[..]).unwrap();
-
-    let mut zip_sink = Vec::new();
-    let parsed_file = file.parse(&mut zip_sink).unwrap();
-    let binary = parsed_file.as_binary().unwrap();
-    let out = binary.melter().melt(&EnvTokens).unwrap();
+    let mut out = Cursor::new(Vec::new());
+    file.melter().melt(&mut out, &EnvTokens).unwrap();
     assert!(
-        eq(out.data(), out.data()),
+        eq(&out.into_inner(), &melted),
         "patch 1.5 did not melt currently"
     );
 }
@@ -123,12 +120,11 @@ fn test_non_ascii_save() -> Result<(), Box<dyn std::error::Error>> {
 fn test_roundtrip_header_melt() {
     let data = include_bytes!("fixtures/header");
     let file = ImperatorFile::from_slice(&data[..]).unwrap();
-    let mut zip_sink = Vec::new();
-    let parsed_file = file.parse(&mut zip_sink).unwrap();
-    let binary = parsed_file.as_binary().unwrap();
-    let out = binary.melter().melt(&EnvTokens).unwrap();
 
-    let file = ImperatorFile::from_slice(out.data()).unwrap();
+    let mut out = Cursor::new(Vec::new());
+    file.melter().melt(&mut out, &EnvTokens).unwrap();
+
+    let file = ImperatorFile::from_slice(&out.get_ref()).unwrap();
     let mut zip_sink = Vec::new();
     let parsed_file = file.parse(&mut zip_sink).unwrap();
     let meta: MetadataOwned = parsed_file.deserializer(&EnvTokens).deserialize().unwrap();
@@ -144,9 +140,7 @@ fn test_header_melt() {
 
     let file = ImperatorFile::from_slice(&data[..]).unwrap();
     let meta = file.meta();
-    let parsed_file = meta.parse().unwrap();
-    let binary = parsed_file.as_binary().unwrap();
-    let out = binary.melter().melt(&EnvTokens).unwrap();
-
-    assert_eq!(&melted[..], out.data());
+    let mut out = Cursor::new(Vec::new());
+    meta.melter().melt(&mut out, &EnvTokens).unwrap();
+    assert_eq!(&melted[..], out.get_ref());
 }

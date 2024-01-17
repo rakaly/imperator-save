@@ -1,23 +1,14 @@
-use imperator_save::{
-    file::{ImperatorParsedFile, ImperatorParsedFileKind, ImperatorText},
-    EnvTokens, ImperatorFile,
-};
-use std::env;
+use imperator_save::{file::ImperatorText, EnvTokens, ImperatorFile};
+use std::{env, io::Cursor};
 
 fn json_to_stdout(file: &ImperatorText) {
     let _ = file.reader().json().to_writer(std::io::stdout());
 }
 
-fn parsed_file_to_json(file: &ImperatorParsedFile) -> Result<(), Box<dyn std::error::Error>> {
-    // if the save is binary, melt it, as the JSON API only works with text
-    match file.kind() {
-        ImperatorParsedFileKind::Text(text) => json_to_stdout(text),
-        ImperatorParsedFileKind::Binary(binary) => {
-            let melted = binary.melter().verbatim(true).melt(&EnvTokens)?;
-            json_to_stdout(&ImperatorText::from_slice(melted.data())?);
-        }
-    };
-
+fn parsed_file_to_json(file: &ImperatorFile) -> Result<(), Box<dyn std::error::Error>> {
+    let mut out = Cursor::new(Vec::new());
+    file.melter().verbatim(true).melt(&mut out, &EnvTokens)?;
+    json_to_stdout(&ImperatorText::from_slice(out.get_ref())?);
     Ok(())
 }
 
@@ -26,8 +17,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let data = std::fs::read(&args[1]).unwrap();
 
     let file = ImperatorFile::from_slice(&data)?;
-    let mut zip_sink = Vec::new();
-    let file = file.parse(&mut zip_sink)?;
     parsed_file_to_json(&file)?;
 
     Ok(())

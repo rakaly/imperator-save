@@ -23,6 +23,7 @@ zip = { version =  "0.6", default-features = false }
 serde = { version = "1", features = ["derive"] }
 libdeflater = { version = "1.19", optional = true }
 miniz_oxide = { version = "0.7", optional = true }
+flate2 = { version = "1.0" }
 thiserror = "1"
 
 [dev-dependencies]
