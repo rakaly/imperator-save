@@ -12,56 +12,6 @@ use std::{
     io::{Cursor, Read, Write},
 };
 
-#[derive(Debug, Clone, Copy)]
-enum QuoteKind {
-    // Regular quoting rules
-    Inactive,
-
-    // Unquote scalar and containers
-    UnquoteAll,
-}
-
-#[derive(Debug, Default)]
-struct Quoter {
-    queued: Option<QuoteKind>,
-    depth: Vec<QuoteKind>,
-}
-
-impl Quoter {
-    #[inline]
-    pub fn push(&mut self) {
-        let next = match self.queued.take() {
-            Some(x @ QuoteKind::UnquoteAll) => x,
-            _ => QuoteKind::Inactive,
-        };
-
-        self.depth.push(next);
-    }
-
-    #[inline]
-    pub fn pop(&mut self) {
-        let _ = self.depth.pop();
-    }
-
-    #[inline]
-    pub fn take_scalar(&mut self) -> QuoteKind {
-        match self.queued.take() {
-            Some(x) => x,
-            None => self.depth.last().copied().unwrap_or(QuoteKind::Inactive),
-        }
-    }
-
-    #[inline]
-    fn queue(&mut self, mode: QuoteKind) {
-        self.queued = Some(mode);
-    }
-
-    #[inline]
-    fn clear_queued(&mut self) {
-        self.queued = None;
-    }
-}
-
 /// Output from melting a binary save to plaintext
 #[derive(Debug, Default)]
 pub struct MeltedDocument {
@@ -285,18 +235,22 @@ where
     }
 
     let mut known_number = false;
-    let mut quoter = Quoter::default();
-
+    let mut quoted_buffer_enabled = false;
+    let mut quoted_buffer: Vec<u8> = Vec::new();
     while let Some(token) = reader.next()? {
+        if quoted_buffer_enabled {
+            if matches!(token, binary::Token::Equal) {
+                wtr.write_unquoted(&quoted_buffer)?;
+            } else {
+                wtr.write_quoted(&quoted_buffer)?;
+            }
+            quoted_buffer.clear();
+            quoted_buffer_enabled = false;
+        }
+
         match token {
-            jomini::binary::Token::Open => {
-                quoter.push();
-                wtr.write_array_start()?
-            }
-            jomini::binary::Token::Close => {
-                quoter.pop();
-                wtr.write_end()?
-            }
+            jomini::binary::Token::Open => wtr.write_start()?,
+            jomini::binary::Token::Close => wtr.write_end()?,
             jomini::binary::Token::I32(x) => {
                 if known_number {
                     wtr.write_i32(x)?;
@@ -307,11 +261,16 @@ where
                     wtr.write_i32(x)?;
                 }
             }
-            jomini::binary::Token::Quoted(x) => match quoter.take_scalar() {
-                QuoteKind::Inactive if wtr.expecting_key() => wtr.write_unquoted(x.as_bytes())?,
-                QuoteKind::UnquoteAll => wtr.write_unquoted(x.as_bytes())?,
-                _ => wtr.write_quoted(x.as_bytes())?,
-            },
+            jomini::binary::Token::Quoted(x) => {
+                if wtr.at_unknown_start() {
+                    quoted_buffer_enabled = true;
+                    quoted_buffer.extend_from_slice(x.as_bytes());
+                } else if wtr.expecting_key() {
+                    wtr.write_unquoted(x.as_bytes())?;
+                } else {
+                    wtr.write_quoted(x.as_bytes())?;
+                }
+            }
             jomini::binary::Token::Unquoted(x) => {
                 wtr.write_unquoted(x.as_bytes())?;
             }
@@ -331,16 +290,8 @@ where
                         continue;
                     }
 
-                    quoter.clear_queued();
-
                     if id.as_bytes() == START_OF_GAMESTATE_FIELD && header.is_some() {
                         return Ok(MelterReturn::StartOfGamestateField);
-                    }
-
-                    if matches!(id, "event_targets" | "historical_regnal_numbers")
-                        || (wtr.depth() != 2 && matches!(id, "technology"))
-                    {
-                        quoter.queue(QuoteKind::UnquoteAll);
                     }
 
                     known_number = id == "seed";
