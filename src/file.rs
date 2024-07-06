@@ -379,7 +379,7 @@ pub struct ImperatorText<'a> {
 impl<'a> ImperatorText<'a> {
     pub fn from_slice(data: &'a [u8]) -> Result<Self, ImperatorError> {
         let header = SaveHeader::from_slice(data)?;
-        Self::from_raw(&data[..header.header_len()])
+        Self::from_raw(&data[header.header_len()..])
     }
 
     pub(crate) fn from_raw(data: &'a [u8]) -> Result<Self, ImperatorError> {
