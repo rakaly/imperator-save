@@ -413,7 +413,7 @@ pub struct ImperatorBinary<'data> {
 impl<'data> ImperatorBinary<'data> {
     pub fn from_slice(data: &'data [u8]) -> Result<Self, ImperatorError> {
         let header = SaveHeader::from_slice(data)?;
-        Self::from_raw(&data[..header.header_len()], header)
+        Self::from_raw(&data[header.header_len()..], header)
     }
 
     pub(crate) fn from_raw(data: &'data [u8], header: SaveHeader) -> Result<Self, ImperatorError> {
