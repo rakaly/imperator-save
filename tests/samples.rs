@@ -1,15 +1,32 @@
-#![cfg(ironman)]
 use imperator_save::{
     file::ImperatorFile,
     models::{MetadataBorrowed, MetadataOwned, Save},
-    Encoding, EnvTokens, FailedResolveStrategy,
+    BasicTokenResolver, Encoding, FailedResolveStrategy,
 };
-use std::io::{Cursor, Read};
+use jomini::binary::TokenResolver;
+use std::{
+    io::{Cursor, Read},
+    sync::LazyLock,
+};
 
 mod utils;
 
+static TOKENS: LazyLock<BasicTokenResolver> = LazyLock::new(|| {
+    let file_data = std::fs::read("assets/imperator.txt").unwrap_or_default();
+    BasicTokenResolver::from_text_lines(file_data.as_slice()).unwrap()
+});
+
+macro_rules! skip_if_no_tokens {
+    () => {
+        if TOKENS.is_empty() {
+            return;
+        }
+    };
+}
+
 #[test]
 fn test_debug_save() {
+    skip_if_no_tokens!();
     let data = utils::request("debug-save.zip");
     let reader = Cursor::new(&data[..]);
     let mut zip = zip::ZipArchive::new(reader).unwrap();
@@ -21,7 +38,7 @@ fn test_debug_save() {
     let meta = file.meta();
     let parsed_metadata = meta.parse().unwrap();
     let save: MetadataOwned = parsed_metadata
-        .deserializer(&EnvTokens)
+        .deserializer(&*TOKENS)
         .deserialize()
         .unwrap();
 
@@ -29,7 +46,7 @@ fn test_debug_save() {
     assert_eq!(save.version, String::from("1.4.2"));
 
     let save: MetadataBorrowed = parsed_metadata
-        .deserializer(&EnvTokens)
+        .deserializer(&*TOKENS)
         .deserialize()
         .unwrap();
     assert_eq!(file.encoding(), Encoding::Text);
@@ -37,19 +54,20 @@ fn test_debug_save() {
 
     let mut zip_sink = Vec::new();
     let parsed_file = file.parse(&mut zip_sink).unwrap();
-    let save = Save::from_deserializer(&parsed_file.deserializer(&EnvTokens)).unwrap();
+    let save = Save::from_deserializer(&parsed_file.deserializer(&*TOKENS)).unwrap();
     assert_eq!(file.encoding(), Encoding::Text);
     assert_eq!(save.meta.version, String::from("1.4.2"));
 }
 
 #[test]
 fn test_observer_save() {
+    skip_if_no_tokens!();
     let data = utils::request("observer1.5.rome");
     let file = ImperatorFile::from_slice(&data[..]).unwrap();
     let meta = file.meta();
     let parsed_metadata = meta.parse().unwrap();
     let save: MetadataOwned = parsed_metadata
-        .deserializer(&EnvTokens)
+        .deserializer(&*TOKENS)
         .deserialize()
         .unwrap();
 
@@ -57,7 +75,7 @@ fn test_observer_save() {
     assert_eq!(save.version, String::from("1.5.3"));
 
     let save: MetadataBorrowed = parsed_metadata
-        .deserializer(&EnvTokens)
+        .deserializer(&*TOKENS)
         .deserialize()
         .unwrap();
     assert_eq!(file.encoding(), Encoding::BinaryZip);
@@ -67,7 +85,7 @@ fn test_observer_save() {
     let parsed_file = file.parse(&mut zip_sink).unwrap();
     let save = Save::from_deserializer(
         &parsed_file
-            .deserializer(&EnvTokens)
+            .deserializer(&*TOKENS)
             .on_failed_resolve(FailedResolveStrategy::Error),
     )
     .unwrap();
@@ -77,6 +95,7 @@ fn test_observer_save() {
 
 #[test]
 fn test_observer_melt() {
+    skip_if_no_tokens!();
     let melt = utils::request("observer1.5_melted.rome.zip");
     let reader = Cursor::new(melt.as_slice());
     let mut zip = zip::ZipArchive::new(reader).unwrap();
@@ -87,7 +106,7 @@ fn test_observer_melt() {
     let data = utils::request("observer1.5.rome");
     let file = ImperatorFile::from_slice(&data[..]).unwrap();
     let mut out = Cursor::new(Vec::new());
-    file.melter().melt(&mut out, &EnvTokens).unwrap();
+    file.melter().melt(&mut out, &*TOKENS).unwrap();
     assert!(
         eq(&out.into_inner(), &melted),
         "patch 1.5 did not melt currently"
@@ -105,29 +124,30 @@ fn eq(a: &[u8], b: &[u8]) -> bool {
 }
 
 #[test]
-fn test_non_ascii_save() -> Result<(), Box<dyn std::error::Error>> {
+fn test_non_ascii_save() {
+    skip_if_no_tokens!();
     let data = utils::request("non-ascii.rome");
     let file = ImperatorFile::from_slice(&data[..]).unwrap();
     let mut zip_sink = Vec::new();
     let parsed_file = file.parse(&mut zip_sink).unwrap();
-    let save = Save::from_deserializer(&parsed_file.deserializer(&EnvTokens)).unwrap();
+    let save = Save::from_deserializer(&parsed_file.deserializer(&*TOKENS)).unwrap();
     assert_eq!(file.encoding(), Encoding::BinaryZip);
     assert_eq!(save.meta.version, String::from("1.5.3"));
-    Ok(())
 }
 
 #[test]
 fn test_roundtrip_header_melt() {
+    skip_if_no_tokens!();
     let data = include_bytes!("fixtures/header");
     let file = ImperatorFile::from_slice(&data[..]).unwrap();
 
     let mut out = Cursor::new(Vec::new());
-    file.melter().melt(&mut out, &EnvTokens).unwrap();
+    file.melter().melt(&mut out, &*TOKENS).unwrap();
 
     let file = ImperatorFile::from_slice(&out.get_ref()).unwrap();
     let mut zip_sink = Vec::new();
     let parsed_file = file.parse(&mut zip_sink).unwrap();
-    let meta: MetadataOwned = parsed_file.deserializer(&EnvTokens).deserialize().unwrap();
+    let meta: MetadataOwned = parsed_file.deserializer(&*TOKENS).deserialize().unwrap();
 
     assert_eq!(file.encoding(), Encoding::Text);
     assert_eq!(meta.version, String::from("1.5.3"));
@@ -135,12 +155,13 @@ fn test_roundtrip_header_melt() {
 
 #[test]
 fn test_header_melt() {
+    skip_if_no_tokens!();
     let data = include_bytes!("fixtures/header");
     let melted = include_bytes!("fixtures/header.melted");
 
     let file = ImperatorFile::from_slice(&data[..]).unwrap();
     let meta = file.meta();
     let mut out = Cursor::new(Vec::new());
-    meta.melter().melt(&mut out, &EnvTokens).unwrap();
+    meta.melter().melt(&mut out, &*TOKENS).unwrap();
     assert_eq!(&melted[..], out.get_ref());
 }
