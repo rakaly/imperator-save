@@ -156,8 +156,10 @@ impl<'a> ImperatorSliceFile<'a> {
     {
         match &self.kind {
             ImperatorSliceFileKind::Text(data) => {
-                self.header.write(&mut output)?;
-                output.write_all(data.0)?;
+                let mut new_header = self.header.clone();
+                new_header.set_kind(crate::SaveHeaderKind::Text);
+                new_header.write(&mut output)?;
+                output.write_all(data.get_ref())?;
                 Ok(MeltedDocument::new())
             }
             ImperatorSliceFileKind::Binary(data) => data.clone().melt(options, resolver, output),
@@ -238,7 +240,9 @@ where
     {
         match &mut self.kind {
             ImperatorFsFileKind::Text(file) => {
-                self.header.write(&mut output)?;
+                let mut new_header = self.header.clone();
+                new_header.set_kind(crate::SaveHeaderKind::Text);
+                new_header.write(&mut output)?;
                 std::io::copy(file, &mut output)?;
                 Ok(MeltedDocument::new())
             }
@@ -359,8 +363,9 @@ where
         let mut reader = zip_entry.verifying_reader(reader);
 
         if self.header.kind().is_text() {
-            let header = self.header.clone();
-            header.write(&mut output)?;
+            let mut new_header = self.header.clone();
+            new_header.set_kind(crate::SaveHeaderKind::Text);
+            new_header.write(&mut output)?;
             std::io::copy(&mut reader, &mut output)?;
             Ok(MeltedDocument::new())
         } else {
@@ -438,7 +443,9 @@ where
         Writer: Write,
     {
         if self.header.kind().is_text() {
-            self.header.write(&mut output)?;
+            let mut new_header = self.header.clone();
+            new_header.set_kind(crate::SaveHeaderKind::Text);
+            new_header.write(&mut output)?;
             std::io::copy(self, &mut output)?;
             Ok(MeltedDocument::new())
         } else {
