@@ -26,7 +26,6 @@ Ironman saves are supported through a provided `TokenResolver`. Per PDS counsel,
 */
 
 mod date;
-mod deflate;
 mod errors;
 mod extraction;
 pub mod file;

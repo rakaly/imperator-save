@@ -1,499 +1,628 @@
 use crate::{
-    flavor::ImperatorFlavor, Encoding, ImperatorError, ImperatorErrorKind, ImperatorMelter,
-    SaveHeader,
+    flavor::ImperatorFlavor,
+    melt,
+    models::{GameState, Save},
+    Encoding, ImperatorError, ImperatorErrorKind, MeltOptions, MeltedDocument, SaveHeader,
 };
-use jomini::{
-    binary::{FailedResolveStrategy, TokenResolver},
-    text::ObjectReader,
-    BinaryDeserializer, BinaryTape, TextDeserializer, TextTape, Utf8Encoding,
+use jomini::{binary::TokenResolver, text::ObjectReader, TextDeserializer, TextTape, Utf8Encoding};
+use rawzip::{FileReader, ReaderAt, ZipArchiveEntryWayfinder, ZipVerifier};
+use serde::de::DeserializeOwned;
+use std::{
+    collections::HashMap,
+    fs::File,
+    io::{Cursor, Read, Seek, Write},
+    ops::Range,
 };
-use serde::Deserialize;
-use std::io::Cursor;
-use zip::result::ZipError;
-
-#[derive(Clone, Debug)]
-pub(crate) struct ImperatorZip<'a> {
-    pub(crate) archive: ImperatorZipFiles<'a>,
-    pub(crate) metadata: &'a [u8],
-    pub(crate) gamestate: VerifiedIndex,
-    pub(crate) is_text: bool,
-}
-
-enum FileKind<'a> {
-    Text(&'a [u8]),
-    Binary(&'a [u8]),
-    Zip(ImperatorZip<'a>),
-}
 
 /// Entrypoint for parsing Imperator saves
 ///
 /// Only consumes enough data to determine encoding of the file
-pub struct ImperatorFile<'a> {
-    header: SaveHeader,
-    kind: FileKind<'a>,
-}
+pub struct ImperatorFile {}
 
-impl<'a> ImperatorFile<'a> {
+impl ImperatorFile {
     /// Creates a Imperator file from a slice of data
-    pub fn from_slice(data: &[u8]) -> Result<ImperatorFile, ImperatorError> {
+    pub fn from_slice(data: &[u8]) -> Result<ImperatorSliceFile, ImperatorError> {
         let header = SaveHeader::from_slice(data)?;
         let data = &data[header.header_len()..];
 
-        let reader = Cursor::new(data);
-        match zip::ZipArchive::new(reader) {
-            Ok(mut zip) => {
-                let metadata = &data[..zip.offset() as usize];
-                let files = ImperatorZipFiles::new(&mut zip, data);
-                let gamestate_idx = files
-                    .gamestate_index()
-                    .ok_or(ImperatorErrorKind::ZipMissingEntry)?;
+        let archive = rawzip::ZipArchive::with_max_search_space(64 * 1024)
+            .locate_in_slice(data)
+            .map_err(ImperatorErrorKind::Zip);
 
-                let is_text = !header.kind().is_binary();
-                Ok(ImperatorFile {
+        match archive {
+            Ok(archive) => {
+                let archive = archive.into_owned();
+                let mut buf = vec![0u8; rawzip::RECOMMENDED_BUFFER_SIZE];
+                let zip = ImperatorZip::try_from_archive(archive, &mut buf, header.clone())?;
+                Ok(ImperatorSliceFile {
                     header,
-                    kind: FileKind::Zip(ImperatorZip {
-                        archive: files,
-                        gamestate: gamestate_idx,
-                        metadata,
-                        is_text,
-                    }),
+                    kind: ImperatorSliceFileKind::Zip(Box::new(zip)),
                 })
             }
-            Err(ZipError::InvalidArchive(_)) => {
+            _ if header.kind().is_binary() => Ok(ImperatorSliceFile {
+                header: header.clone(),
+                kind: ImperatorSliceFileKind::Binary(ImperatorBinary {
+                    reader: data,
+                    header,
+                }),
+            }),
+            _ => Ok(ImperatorSliceFile {
+                header,
+                kind: ImperatorSliceFileKind::Text(ImperatorText(data)),
+            }),
+        }
+    }
+
+    pub fn from_file(mut file: File) -> Result<ImperatorFsFile<FileReader>, ImperatorError> {
+        let mut buf = [0u8; SaveHeader::SIZE];
+        file.read_exact(&mut buf)?;
+        let header = SaveHeader::from_slice(&buf)?;
+        let mut buf = vec![0u8; rawzip::RECOMMENDED_BUFFER_SIZE];
+
+        let archive =
+            rawzip::ZipArchive::with_max_search_space(64 * 1024).locate_in_file(file, &mut buf);
+
+        match archive {
+            Ok(archive) => {
+                let zip = ImperatorZip::try_from_archive(archive, &mut buf, header.clone())?;
+                Ok(ImperatorFsFile {
+                    header,
+                    kind: ImperatorFsFileKind::Zip(Box::new(zip)),
+                })
+            }
+            Err(e) => {
+                let mut file = e.into_inner();
+                file.seek(std::io::SeekFrom::Start(SaveHeader::SIZE as u64))?;
                 if header.kind().is_binary() {
-                    Ok(ImperatorFile {
+                    Ok(ImperatorFsFile {
+                        header: header.clone(),
+                        kind: ImperatorFsFileKind::Binary(ImperatorBinary {
+                            header,
+                            reader: file,
+                        }),
+                    })
+                } else {
+                    Ok(ImperatorFsFile {
                         header,
-                        kind: FileKind::Binary(data),
-                    })
-                } else {
-                    Ok(ImperatorFile {
-                        header,
-                        kind: FileKind::Text(data),
-                    })
-                }
-            }
-            Err(e) => Err(ImperatorErrorKind::ZipArchive(e).into()),
-        }
-    }
-
-    /// Return first line header
-    pub fn header(&self) -> &SaveHeader {
-        &self.header
-    }
-
-    /// Returns the detected decoding of the file
-    pub fn encoding(&self) -> Encoding {
-        match &self.kind {
-            FileKind::Text(_) => Encoding::Text,
-            FileKind::Binary(_) => Encoding::Binary,
-            FileKind::Zip(ImperatorZip { is_text: true, .. }) => Encoding::TextZip,
-            FileKind::Zip(ImperatorZip { is_text: false, .. }) => Encoding::BinaryZip,
-        }
-    }
-
-    /// Returns the size of the file
-    ///
-    /// The size includes the inflated size of the zip
-    pub fn size(&self) -> usize {
-        match &self.kind {
-            FileKind::Text(x) | FileKind::Binary(x) => x.len(),
-            FileKind::Zip(ImperatorZip { gamestate, .. }) => gamestate.size,
-        }
-    }
-
-    pub fn meta(&self) -> ImperatorMeta<'a> {
-        match &self.kind {
-            FileKind::Text(x) => {
-                // The metadata section should be way smaller than the total
-                // length so if the total data isn't significantly bigger (2x or
-                // more), assume that the header doesn't accurately represent
-                // the metadata length. Like maybe someone accidentally
-                // converted the line endings from unix to dos.
-                let len = self.header.metadata_len() as usize;
-                let data = if len * 2 > x.len() {
-                    x
-                } else {
-                    &x[..len.min(x.len())]
-                };
-
-                ImperatorMeta {
-                    kind: ImperatorMetaKind::Text(data),
-                    header: self.header.clone(),
-                }
-            }
-            FileKind::Binary(x) => {
-                let metadata = x.get(..self.header.metadata_len() as usize).unwrap_or(x);
-                ImperatorMeta {
-                    kind: ImperatorMetaKind::Binary(metadata),
-                    header: self.header.clone(),
-                }
-            }
-            FileKind::Zip(ImperatorZip {
-                metadata,
-                is_text: true,
-                ..
-            }) => ImperatorMeta {
-                kind: ImperatorMetaKind::Text(metadata),
-                header: self.header.clone(),
-            },
-            FileKind::Zip(ImperatorZip { metadata, .. }) => ImperatorMeta {
-                kind: ImperatorMetaKind::Binary(metadata),
-                header: self.header.clone(),
-            },
-        }
-    }
-
-    /// Parses the entire file
-    ///
-    /// If the file is a zip, the zip contents will be inflated into the zip
-    /// sink before being parsed
-    pub fn parse(
-        &self,
-        zip_sink: &'a mut Vec<u8>,
-    ) -> Result<ImperatorParsedFile<'a>, ImperatorError> {
-        match &self.kind {
-            FileKind::Text(x) => {
-                let text = ImperatorText::from_raw(x)?;
-                Ok(ImperatorParsedFile {
-                    kind: ImperatorParsedFileKind::Text(text),
-                })
-            }
-            FileKind::Binary(x) => {
-                let binary = ImperatorBinary::from_raw(x, self.header.clone())?;
-                Ok(ImperatorParsedFile {
-                    kind: ImperatorParsedFileKind::Binary(binary),
-                })
-            }
-            FileKind::Zip(ImperatorZip {
-                archive,
-                gamestate,
-                is_text,
-                ..
-            }) => {
-                let zip = archive.retrieve_file(*gamestate);
-                zip.read_to_end(zip_sink)?;
-
-                if *is_text {
-                    let text = ImperatorText::from_raw(zip_sink)?;
-                    Ok(ImperatorParsedFile {
-                        kind: ImperatorParsedFileKind::Text(text),
-                    })
-                } else {
-                    let binary = ImperatorBinary::from_raw(zip_sink, self.header.clone())?;
-                    Ok(ImperatorParsedFile {
-                        kind: ImperatorParsedFileKind::Binary(binary),
+                        kind: ImperatorFsFileKind::Text(file),
                     })
                 }
             }
         }
     }
-
-    pub fn melter(&self) -> ImperatorMelter<'a> {
-        match &self.kind {
-            FileKind::Text(x) => ImperatorMelter::new_text(x, self.header.clone()),
-            FileKind::Binary(x) => ImperatorMelter::new_binary(x, self.header.clone()),
-            FileKind::Zip(x) => ImperatorMelter::new_zip((*x).clone(), self.header.clone()),
-        }
-    }
-}
-
-/// Holds the metadata section of the save
-#[derive(Debug)]
-pub struct ImperatorMeta<'a> {
-    kind: ImperatorMetaKind<'a>,
-    header: SaveHeader,
-}
-
-/// Describes the format of the metadata section of the save
-#[derive(Debug)]
-pub enum ImperatorMetaKind<'a> {
-    Text(&'a [u8]),
-    Binary(&'a [u8]),
-}
-
-impl<'a> ImperatorMeta<'a> {
-    pub fn header(&self) -> &SaveHeader {
-        &self.header
-    }
-
-    pub fn kind(&self) -> &ImperatorMetaKind {
-        &self.kind
-    }
-
-    pub fn parse(&self) -> Result<ImperatorParsedFile<'a>, ImperatorError> {
-        match self.kind {
-            ImperatorMetaKind::Text(x) => {
-                ImperatorText::from_raw(x).map(|kind| ImperatorParsedFile {
-                    kind: ImperatorParsedFileKind::Text(kind),
-                })
-            }
-
-            ImperatorMetaKind::Binary(x) => {
-                ImperatorBinary::from_raw(x, self.header.clone()).map(|kind| ImperatorParsedFile {
-                    kind: ImperatorParsedFileKind::Binary(kind),
-                })
-            }
-        }
-    }
-
-    pub fn melter(&self) -> ImperatorMelter<'a> {
-        match self.kind {
-            ImperatorMetaKind::Text(x) => ImperatorMelter::new_text(x, self.header.clone()),
-            ImperatorMetaKind::Binary(x) => ImperatorMelter::new_binary(x, self.header.clone()),
-        }
-    }
-}
-
-/// Contains the parsed Imperator file
-pub enum ImperatorParsedFileKind<'a> {
-    /// The Imperator file as text
-    Text(ImperatorText<'a>),
-
-    /// The Imperator file as binary
-    Binary(ImperatorBinary<'a>),
-}
-
-/// An Imperator file that has been parsed
-pub struct ImperatorParsedFile<'a> {
-    kind: ImperatorParsedFileKind<'a>,
-}
-
-impl<'a> ImperatorParsedFile<'a> {
-    /// Returns the file as text
-    pub fn as_text(&self) -> Option<&ImperatorText> {
-        match &self.kind {
-            ImperatorParsedFileKind::Text(x) => Some(x),
-            _ => None,
-        }
-    }
-
-    /// Returns the file as binary
-    pub fn as_binary(&self) -> Option<&ImperatorBinary> {
-        match &self.kind {
-            ImperatorParsedFileKind::Binary(x) => Some(x),
-            _ => None,
-        }
-    }
-
-    /// Returns the kind of file (binary or text)
-    pub fn kind(&self) -> &ImperatorParsedFileKind {
-        &self.kind
-    }
-
-    /// Prepares the file for deserialization into a custom structure
-    pub fn deserializer<'b, RES>(&'b self, resolver: &'b RES) -> ImperatorDeserializer<RES>
-    where
-        RES: TokenResolver,
-    {
-        match &self.kind {
-            ImperatorParsedFileKind::Text(x) => ImperatorDeserializer {
-                kind: ImperatorDeserializerKind::Text(x),
-            },
-            ImperatorParsedFileKind::Binary(x) => ImperatorDeserializer {
-                kind: ImperatorDeserializerKind::Binary(x.deserializer(resolver)),
-            },
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct VerifiedIndex {
-    data_start: usize,
-    data_end: usize,
-    size: usize,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct ImperatorZipFiles<'a> {
-    archive: &'a [u8],
-    gamestate_index: Option<VerifiedIndex>,
+pub enum ImperatorSliceFileKind<'a> {
+    Text(ImperatorText<'a>),
+    Binary(ImperatorBinary<&'a [u8]>),
+    Zip(Box<ImperatorZip<&'a [u8]>>),
 }
 
-impl<'a> ImperatorZipFiles<'a> {
-    pub fn new(archive: &mut zip::ZipArchive<Cursor<&'a [u8]>>, data: &'a [u8]) -> Self {
-        let mut gamestate_index = None;
+#[derive(Debug, Clone)]
+pub struct ImperatorSliceFile<'a> {
+    header: SaveHeader,
+    kind: ImperatorSliceFileKind<'a>,
+}
 
-        for index in 0..archive.len() {
-            if let Ok(file) = archive.by_index_raw(index) {
-                let size = file.size() as usize;
-                let data_start = file.data_start() as usize;
-                let data_end = data_start + file.compressed_size() as usize;
+impl<'a> ImperatorSliceFile<'a> {
+    pub fn kind(&self) -> &ImperatorSliceFileKind {
+        &self.kind
+    }
 
-                if file.name() == "gamestate" {
-                    gamestate_index = Some(VerifiedIndex {
-                        data_start,
-                        data_end,
-                        size,
-                    })
-                }
+    pub fn kind_mut(&'a mut self) -> &'a mut ImperatorSliceFileKind<'a> {
+        &mut self.kind
+    }
+
+    pub fn encoding(&self) -> Encoding {
+        match &self.kind {
+            ImperatorSliceFileKind::Text(_) => Encoding::Text,
+            ImperatorSliceFileKind::Binary(_) => Encoding::Binary,
+            ImperatorSliceFileKind::Zip(_) if self.header.kind().is_text() => Encoding::TextZip,
+            ImperatorSliceFileKind::Zip(_) => Encoding::BinaryZip,
+        }
+    }
+
+    pub fn parse_save<R>(&self, resolver: R) -> Result<Save, ImperatorError>
+    where
+        R: TokenResolver,
+    {
+        match &self.kind {
+            ImperatorSliceFileKind::Text(data) => data.deserializer().deserialize(),
+            ImperatorSliceFileKind::Binary(data) => {
+                data.clone().deserializer(resolver).deserialize()
+            }
+            ImperatorSliceFileKind::Zip(archive) => {
+                let game: GameState = archive.deserialize_gamestate(&resolver)?;
+                let mut entry = archive.meta()?;
+                let meta = entry.deserializer(&resolver).deserialize()?;
+                Ok(Save {
+                    meta,
+                    gamestate: game,
+                })
             }
         }
-
-        Self {
-            archive: data,
-            gamestate_index,
-        }
     }
 
-    pub fn retrieve_file(&self, index: VerifiedIndex) -> ImperatorZipFile {
-        let raw = &self.archive[index.data_start..index.data_end];
-        ImperatorZipFile {
-            raw,
-            size: index.size,
+    pub fn melt<Resolver, Writer>(
+        &self,
+        options: MeltOptions,
+        resolver: Resolver,
+        mut output: Writer,
+    ) -> Result<MeltedDocument, ImperatorError>
+    where
+        Resolver: TokenResolver,
+        Writer: Write,
+    {
+        match &self.kind {
+            ImperatorSliceFileKind::Text(data) => {
+                self.header.write(&mut output)?;
+                output.write_all(data.0)?;
+                Ok(MeltedDocument::new())
+            }
+            ImperatorSliceFileKind::Binary(data) => data.clone().melt(options, resolver, output),
+            ImperatorSliceFileKind::Zip(zip) => zip.melt(options, resolver, output),
         }
-    }
-
-    pub fn gamestate_index(&self) -> Option<VerifiedIndex> {
-        self.gamestate_index
     }
 }
 
-pub(crate) struct ImperatorZipFile<'a> {
-    raw: &'a [u8],
-    size: usize,
+pub enum ImperatorFsFileKind<R> {
+    Text(File),
+    Binary(ImperatorBinary<File>),
+    Zip(Box<ImperatorZip<R>>),
 }
 
-impl<'a> ImperatorZipFile<'a> {
-    pub fn read_to_end(&self, buf: &mut Vec<u8>) -> Result<(), ImperatorError> {
-        let start_len = buf.len();
-        buf.resize(start_len + self.size(), 0);
-        let body = &mut buf[start_len..];
-        crate::deflate::inflate_exact(self.raw, body).map_err(ImperatorErrorKind::from)?;
-        Ok(())
+pub struct ImperatorFsFile<R> {
+    header: SaveHeader,
+    kind: ImperatorFsFileKind<R>,
+}
+
+impl<R> ImperatorFsFile<R> {
+    pub fn kind(&self) -> &ImperatorFsFileKind<R> {
+        &self.kind
     }
 
-    pub fn reader(&self) -> crate::deflate::DeflateReader<'a> {
-        crate::deflate::DeflateReader::new(self.raw, crate::deflate::CompressionMethod::Deflate)
+    pub fn kind_mut(&mut self) -> &mut ImperatorFsFileKind<R> {
+        &mut self.kind
     }
 
-    pub fn size(&self) -> usize {
-        self.size
+    pub fn encoding(&self) -> Encoding {
+        match &self.kind {
+            ImperatorFsFileKind::Text(_) => Encoding::Text,
+            ImperatorFsFileKind::Binary(_) => Encoding::Binary,
+            ImperatorFsFileKind::Zip(_) if self.header.kind().is_text() => Encoding::TextZip,
+            ImperatorFsFileKind::Zip(_) => Encoding::BinaryZip,
+        }
+    }
+}
+
+impl<R> ImperatorFsFile<R>
+where
+    R: ReaderAt,
+{
+    pub fn parse_save<RES>(&mut self, resolver: RES) -> Result<Save, ImperatorError>
+    where
+        RES: TokenResolver,
+    {
+        match &mut self.kind {
+            ImperatorFsFileKind::Text(file) => {
+                let reader = jomini::text::TokenReader::new(file);
+                let mut deserializer = TextDeserializer::from_utf8_reader(reader);
+                Ok(deserializer.deserialize()?)
+            }
+            ImperatorFsFileKind::Binary(file) => {
+                let result = file.deserializer(resolver).deserialize()?;
+                Ok(result)
+            }
+            ImperatorFsFileKind::Zip(archive) => {
+                let game: GameState = archive.deserialize_gamestate(&resolver)?;
+                let mut entry = archive.meta()?;
+                let meta = entry.deserializer(&resolver).deserialize()?;
+                Ok(Save {
+                    meta,
+                    gamestate: game,
+                })
+            }
+        }
+    }
+
+    pub fn melt<Resolver, Writer>(
+        &mut self,
+        options: MeltOptions,
+        resolver: Resolver,
+        mut output: Writer,
+    ) -> Result<MeltedDocument, ImperatorError>
+    where
+        Resolver: TokenResolver,
+        Writer: Write,
+    {
+        match &mut self.kind {
+            ImperatorFsFileKind::Text(file) => {
+                self.header.write(&mut output)?;
+                std::io::copy(file, &mut output)?;
+                Ok(MeltedDocument::new())
+            }
+            ImperatorFsFileKind::Binary(data) => data.melt(options, resolver, output),
+            ImperatorFsFileKind::Zip(zip) => zip.melt(options, resolver, output),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ImperatorZip<R> {
+    pub(crate) archive: rawzip::ZipArchive<R>,
+    pub(crate) metadata: ImperatorMetaKind,
+    pub(crate) gamestate: ZipArchiveEntryWayfinder,
+    pub(crate) header: SaveHeader,
+}
+
+impl<R> ImperatorZip<R>
+where
+    R: ReaderAt,
+{
+    pub fn try_from_archive(
+        archive: rawzip::ZipArchive<R>,
+        buf: &mut [u8],
+        header: SaveHeader,
+    ) -> Result<Self, ImperatorError> {
+        let offset = archive.base_offset();
+        let mut entries = archive.entries(buf);
+        let mut gamestate = None;
+        let mut metadata = None;
+
+        while let Some(entry) = entries.next_entry().map_err(ImperatorErrorKind::Zip)? {
+            match entry.file_raw_path() {
+                b"gamestate" => gamestate = Some(entry.wayfinder()),
+                b"meta" => metadata = Some(entry.wayfinder()),
+                _ => {}
+            };
+        }
+
+        match (gamestate, metadata) {
+            (Some(gamestate), Some(metadata)) => Ok(ImperatorZip {
+                archive,
+                gamestate,
+                metadata: ImperatorMetaKind::Zip(metadata),
+                header,
+            }),
+            (Some(gamestate), None) => Ok(ImperatorZip {
+                archive,
+                gamestate,
+                metadata: ImperatorMetaKind::Inlined(SaveHeader::SIZE..offset as usize),
+                header,
+            }),
+            _ => Err(ImperatorErrorKind::ZipMissingEntry.into()),
+        }
+    }
+
+    pub fn deserialize_gamestate<T, RES>(&self, resolver: RES) -> Result<T, ImperatorError>
+    where
+        T: DeserializeOwned,
+        RES: TokenResolver,
+    {
+        let zip_entry = self
+            .archive
+            .get_entry(self.gamestate)
+            .map_err(ImperatorErrorKind::Zip)?;
+        let reader = CompressedFileReader::from_compressed(zip_entry.reader())?;
+        let reader = zip_entry.verifying_reader(reader);
+        let encoding = if self.header.kind().is_binary() {
+            Encoding::Binary
+        } else {
+            Encoding::Text
+        };
+        let data: T = ImperatorModeller::from_reader(reader, &resolver, encoding).deserialize()?;
+        Ok(data)
+    }
+
+    pub fn meta(&self) -> Result<ImperatorEntry<'_, rawzip::ZipReader<'_, R>, R>, ImperatorError> {
+        let kind = match &self.metadata {
+            ImperatorMetaKind::Inlined(x) => {
+                let mut entry = vec![0u8; x.len()];
+                self.archive
+                    .get_ref()
+                    .read_exact_at(&mut entry, x.start as u64)?;
+                ImperatorEntryKind::Inlined(Cursor::new(entry))
+            }
+            ImperatorMetaKind::Zip(wayfinder) => {
+                let zip_entry = self
+                    .archive
+                    .get_entry(*wayfinder)
+                    .map_err(ImperatorErrorKind::Zip)?;
+                let reader = CompressedFileReader::from_compressed(zip_entry.reader())?;
+                let reader = zip_entry.verifying_reader(reader);
+                ImperatorEntryKind::Zip(reader)
+            }
+        };
+
+        Ok(ImperatorEntry {
+            inner: kind,
+            header: self.header.clone(),
+        })
+    }
+
+    pub fn melt<Resolver, Writer>(
+        &self,
+        options: MeltOptions,
+        resolver: Resolver,
+        mut output: Writer,
+    ) -> Result<MeltedDocument, ImperatorError>
+    where
+        Resolver: TokenResolver,
+        Writer: Write,
+    {
+        let zip_entry = self
+            .archive
+            .get_entry(self.gamestate)
+            .map_err(ImperatorErrorKind::Zip)?;
+        let reader = CompressedFileReader::from_compressed(zip_entry.reader())?;
+        let mut reader = zip_entry.verifying_reader(reader);
+
+        if self.header.kind().is_text() {
+            let header = self.header.clone();
+            header.write(&mut output)?;
+            std::io::copy(&mut reader, &mut output)?;
+            Ok(MeltedDocument::new())
+        } else {
+            melt::melt(
+                &mut reader,
+                &mut output,
+                resolver,
+                options,
+                self.header.clone(),
+            )
+        }
+    }
+}
+
+/// Describes the format of the metadata section of the save
+#[derive(Debug, Clone)]
+pub enum ImperatorMetaKind {
+    Inlined(Range<usize>),
+    Zip(ZipArchiveEntryWayfinder),
+}
+
+#[derive(Debug)]
+pub struct ImperatorEntry<'archive, R, ReadAt> {
+    inner: ImperatorEntryKind<'archive, R, ReadAt>,
+    header: SaveHeader,
+}
+
+#[derive(Debug)]
+pub enum ImperatorEntryKind<'archive, R, ReadAt> {
+    Inlined(Cursor<Vec<u8>>),
+    Zip(ZipVerifier<'archive, CompressedFileReader<R>, ReadAt>),
+}
+
+impl<R, ReadAt> Read for ImperatorEntry<'_, R, ReadAt>
+where
+    R: Read,
+    ReadAt: ReaderAt,
+{
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match &mut self.inner {
+            ImperatorEntryKind::Inlined(data) => data.read(buf),
+            ImperatorEntryKind::Zip(reader) => reader.read(buf),
+        }
+    }
+}
+
+impl<'archive, R, ReadAt> ImperatorEntry<'archive, R, ReadAt>
+where
+    R: Read,
+    ReadAt: ReaderAt,
+{
+    pub fn deserializer<'a, RES>(
+        &'a mut self,
+        resolver: RES,
+    ) -> ImperatorModeller<&'a mut ImperatorEntry<'archive, R, ReadAt>, RES>
+    where
+        RES: TokenResolver,
+    {
+        let encoding = if self.header.kind().is_text() {
+            Encoding::Text
+        } else {
+            Encoding::Binary
+        };
+        ImperatorModeller::from_reader(self, resolver, encoding)
+    }
+
+    pub fn melt<Resolver, Writer>(
+        &mut self,
+        options: MeltOptions,
+        resolver: Resolver,
+        mut output: Writer,
+    ) -> Result<MeltedDocument, ImperatorError>
+    where
+        Resolver: TokenResolver,
+        Writer: Write,
+    {
+        if self.header.kind().is_text() {
+            self.header.write(&mut output)?;
+            std::io::copy(self, &mut output)?;
+            Ok(MeltedDocument::new())
+        } else {
+            let header = self.header.clone();
+            melt::melt(self, &mut output, resolver, options, header)
+        }
     }
 }
 
 /// A parsed Imperator text document
-pub struct ImperatorText<'a> {
+pub struct ImperatorParsedText<'a> {
     tape: TextTape<'a>,
 }
 
-impl<'a> ImperatorText<'a> {
+impl<'a> ImperatorParsedText<'a> {
     pub fn from_slice(data: &'a [u8]) -> Result<Self, ImperatorError> {
         let header = SaveHeader::from_slice(data)?;
         Self::from_raw(&data[header.header_len()..])
     }
 
-    pub(crate) fn from_raw(data: &'a [u8]) -> Result<Self, ImperatorError> {
+    pub fn from_raw(data: &'a [u8]) -> Result<Self, ImperatorError> {
         let tape = TextTape::from_slice(data).map_err(ImperatorErrorKind::Parse)?;
-        Ok(ImperatorText { tape })
+        Ok(ImperatorParsedText { tape })
     }
 
     pub fn reader(&self) -> ObjectReader<Utf8Encoding> {
         self.tape.utf8_reader()
     }
+}
 
-    pub fn deserialize<T>(&self) -> Result<T, ImperatorError>
-    where
-        T: Deserialize<'a>,
-    {
-        let deser = TextDeserializer::from_utf8_tape(&self.tape);
-        let result = deser
-            .deserialize()
-            .map_err(ImperatorErrorKind::Deserialize)?;
-        Ok(result)
+#[derive(Debug, Clone)]
+pub struct ImperatorText<'a>(&'a [u8]);
+
+impl ImperatorText<'_> {
+    pub fn get_ref(&self) -> &[u8] {
+        self.0
+    }
+
+    pub fn deserializer(&self) -> ImperatorModeller<&[u8], HashMap<u16, String>> {
+        ImperatorModeller {
+            reader: self.0,
+            resolver: HashMap::new(),
+            encoding: Encoding::Text,
+        }
     }
 }
 
-/// A parsed Imperator binary document
-pub struct ImperatorBinary<'data> {
-    tape: BinaryTape<'data>,
-    #[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct ImperatorBinary<R> {
+    reader: R,
     header: SaveHeader,
 }
 
-impl<'data> ImperatorBinary<'data> {
-    pub fn from_slice(data: &'data [u8]) -> Result<Self, ImperatorError> {
-        let header = SaveHeader::from_slice(data)?;
-        Self::from_raw(&data[header.header_len()..], header)
-    }
-
-    pub(crate) fn from_raw(data: &'data [u8], header: SaveHeader) -> Result<Self, ImperatorError> {
-        let tape = BinaryTape::from_slice(data).map_err(ImperatorErrorKind::Parse)?;
-        Ok(ImperatorBinary { tape, header })
-    }
-
-    pub fn deserializer<'b, RES>(
-        &'b self,
-        resolver: &'b RES,
-    ) -> ImperatorBinaryDeserializer<'data, 'b, RES>
-    where
-        RES: TokenResolver,
-    {
-        ImperatorBinaryDeserializer {
-            deser: BinaryDeserializer::builder_flavor(ImperatorFlavor)
-                .from_tape(&self.tape, resolver),
-        }
-    }
-}
-
-enum ImperatorDeserializerKind<'data, 'tape, RES> {
-    Text(&'tape ImperatorText<'data>),
-    Binary(ImperatorBinaryDeserializer<'data, 'tape, RES>),
-}
-
-/// A deserializer for custom structures
-pub struct ImperatorDeserializer<'data, 'tape, RES> {
-    kind: ImperatorDeserializerKind<'data, 'tape, RES>,
-}
-
-impl<'data, 'tape, RES> ImperatorDeserializer<'data, 'tape, RES>
+impl<R> ImperatorBinary<R>
 where
-    RES: TokenResolver,
+    R: Read,
 {
-    pub fn on_failed_resolve(&mut self, strategy: FailedResolveStrategy) -> &mut Self {
-        if let ImperatorDeserializerKind::Binary(x) = &mut self.kind {
-            x.on_failed_resolve(strategy);
-        }
-        self
+    pub fn get_ref(&self) -> &R {
+        &self.reader
     }
 
-    pub fn deserialize<T>(&self) -> Result<T, ImperatorError>
+    pub fn deserializer<RES>(&mut self, resolver: RES) -> ImperatorModeller<&'_ mut R, RES> {
+        ImperatorModeller {
+            reader: &mut self.reader,
+            resolver,
+            encoding: Encoding::Binary,
+        }
+    }
+
+    pub fn melt<Resolver, Writer>(
+        &mut self,
+        options: MeltOptions,
+        resolver: Resolver,
+        mut output: Writer,
+    ) -> Result<MeltedDocument, ImperatorError>
     where
-        T: Deserialize<'data>,
+        Resolver: TokenResolver,
+        Writer: Write,
     {
-        match &self.kind {
-            ImperatorDeserializerKind::Text(x) => x.deserialize(),
-            ImperatorDeserializerKind::Binary(x) => x.deserialize(),
-        }
+        melt::melt(
+            &mut self.reader,
+            &mut output,
+            resolver,
+            options,
+            self.header.clone(),
+        )
     }
 }
 
-/// Deserializes binary data into custom structures
-pub struct ImperatorBinaryDeserializer<'data, 'tape, RES> {
-    deser: BinaryDeserializer<'tape, 'data, 'tape, RES, ImperatorFlavor>,
+#[derive(Debug)]
+pub struct ImperatorModeller<Reader, Resolver> {
+    reader: Reader,
+    resolver: Resolver,
+    encoding: Encoding,
 }
 
-impl<'data, 'tape, RES> ImperatorBinaryDeserializer<'data, 'tape, RES>
+impl<Reader: Read, Resolver: TokenResolver> ImperatorModeller<Reader, Resolver> {
+    pub fn from_reader(reader: Reader, resolver: Resolver, encoding: Encoding) -> Self {
+        ImperatorModeller {
+            reader,
+            resolver,
+            encoding,
+        }
+    }
+
+    pub fn encoding(&self) -> Encoding {
+        self.encoding
+    }
+
+    pub fn deserialize<T>(&mut self) -> Result<T, ImperatorError>
+    where
+        T: DeserializeOwned,
+    {
+        T::deserialize(self)
+    }
+
+    pub fn into_inner(self) -> Reader {
+        self.reader
+    }
+}
+
+impl<'de, 'a: 'de, Reader: Read, Resolver: TokenResolver> serde::de::Deserializer<'de>
+    for &'a mut ImperatorModeller<Reader, Resolver>
+{
+    type Error = ImperatorError;
+
+    fn deserialize_any<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        Err(ImperatorError::new(ImperatorErrorKind::DeserializeImpl {
+            msg: String::from("only struct supported"),
+        }))
+    }
+
+    fn deserialize_struct<V>(
+        self,
+        name: &'static str,
+        fields: &'static [&'static str],
+        visitor: V,
+    ) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        if matches!(self.encoding, Encoding::Binary) {
+            use jomini::binary::BinaryFlavor;
+            let mut deser = ImperatorFlavor
+                .deserializer()
+                .from_reader(&mut self.reader, &self.resolver);
+            Ok(deser.deserialize_struct(name, fields, visitor)?)
+        } else {
+            let reader = jomini::text::TokenReader::new(&mut self.reader);
+            let mut deser = TextDeserializer::from_utf8_reader(reader);
+            Ok(deser.deserialize_struct(name, fields, visitor)?)
+        }
+    }
+
+    serde::forward_to_deserialize_any! {
+        bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
+        bytes byte_buf option unit unit_struct newtype_struct seq tuple
+        tuple_struct map enum identifier ignored_any
+    }
+}
+
+#[derive(Debug)]
+pub struct CompressedFileReader<R> {
+    reader: flate2::read::DeflateDecoder<R>,
+}
+
+impl<R: Read> CompressedFileReader<R> {
+    pub fn from_compressed(reader: R) -> Result<Self, ImperatorError>
+    where
+        R: Read,
+    {
+        let inflater = flate2::read::DeflateDecoder::new(reader);
+        Ok(CompressedFileReader { reader: inflater })
+    }
+}
+
+impl<R> std::io::Read for CompressedFileReader<R>
 where
-    RES: TokenResolver,
+    R: Read,
 {
-    pub fn on_failed_resolve(&mut self, strategy: FailedResolveStrategy) -> &mut Self {
-        self.deser.on_failed_resolve(strategy);
-        self
-    }
-
-    pub fn deserialize<T>(&self) -> Result<T, ImperatorError>
-    where
-        T: Deserialize<'data>,
-    {
-        let result = self.deser.deserialize().map_err(|e| match e.kind() {
-            jomini::ErrorKind::Deserialize(e2) => match e2.kind() {
-                &jomini::DeserializeErrorKind::UnknownToken { token_id } => {
-                    ImperatorErrorKind::UnknownToken { token_id }
-                }
-                _ => ImperatorErrorKind::Deserialize(e),
-            },
-            _ => ImperatorErrorKind::Deserialize(e),
-        })?;
-        Ok(result)
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.reader.read(buf)
     }
 }

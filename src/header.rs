@@ -89,6 +89,8 @@ pub struct SaveHeader {
 }
 
 impl SaveHeader {
+    pub(crate) const SIZE: usize = 24;
+
     pub fn from_slice(data: &[u8]) -> Result<Self, ImperatorError> {
         if data.len() < 24 {
             return Err(ImperatorErrorKind::InvalidHeader.into());

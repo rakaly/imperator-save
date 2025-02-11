@@ -1,25 +1,43 @@
-use imperator_save::{file::ImperatorText, BasicTokenResolver, ImperatorFile};
-use std::{env, io::Cursor};
+use imperator_save::{
+    file::{ImperatorFsFileKind, ImperatorParsedText},
+    BasicTokenResolver, ImperatorFile,
+};
+use std::{env, error::Error, io::Read};
 
-fn json_to_stdout(file: &ImperatorText) {
-    let _ = file.reader().json().to_writer(std::io::stdout());
+fn json_to_stdout(file: &ImperatorParsedText) {
+    let stdout = std::io::stdout();
+    let _ = file.reader().json().to_writer(stdout.lock());
 }
 
-fn parsed_file_to_json(file: &ImperatorFile) -> Result<(), Box<dyn std::error::Error>> {
-    let mut out = Cursor::new(Vec::new());
+fn main() -> Result<(), Box<dyn Error>> {
+    let args: Vec<String> = env::args().collect();
+    let file = std::fs::File::open(&args[1])?;
+    let mut file = ImperatorFile::from_file(file)?;
+
     let file_data = std::fs::read("assets/imperator.txt").unwrap_or_default();
     let resolver = BasicTokenResolver::from_text_lines(file_data.as_slice())?;
-    file.melter().verbatim(true).melt(&mut out, &resolver)?;
-    json_to_stdout(&ImperatorText::from_slice(out.get_ref())?);
-    Ok(())
-}
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Vec<String> = env::args().collect();
-    let data = std::fs::read(&args[1]).unwrap();
-
-    let file = ImperatorFile::from_slice(&data)?;
-    parsed_file_to_json(&file)?;
+    let melt_options = imperator_save::MeltOptions::new();
+    match file.kind_mut() {
+        ImperatorFsFileKind::Text(x) => {
+            let mut buf = Vec::new();
+            x.read_to_end(&mut buf)?;
+            let text = ImperatorParsedText::from_raw(&buf)?;
+            json_to_stdout(&text);
+        }
+        ImperatorFsFileKind::Binary(x) => {
+            let mut buf = Vec::new();
+            x.melt(melt_options, resolver, &mut buf)?;
+            let text = ImperatorParsedText::from_slice(&buf)?;
+            json_to_stdout(&text);
+        }
+        ImperatorFsFileKind::Zip(x) => {
+            let mut data = Vec::new();
+            x.melt(melt_options, resolver, &mut data)?;
+            let text = ImperatorParsedText::from_slice(&data)?;
+            json_to_stdout(&text);
+        }
+    }
 
     Ok(())
 }

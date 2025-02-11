@@ -1,7 +1,5 @@
-use crate::deflate::ZipInflationError;
 use jomini::binary;
-use std::io;
-use zip::result::ZipError;
+use std::{fmt, io};
 
 /// A Imperator Error
 #[derive(thiserror::Error, Debug)]
@@ -29,16 +27,13 @@ impl From<ImperatorErrorKind> for ImperatorError {
 #[derive(thiserror::Error, Debug)]
 pub enum ImperatorErrorKind {
     #[error("unable to parse as zip: {0}")]
-    ZipArchive(#[from] ZipError),
+    Zip(#[from] rawzip::Error),
 
     #[error("missing gamestate entry in zip")]
     ZipMissingEntry,
 
-    #[error("unable to inflate zip entry: {msg}")]
-    ZipBadData { msg: String },
-
-    #[error("early eof, only able to write {written} bytes")]
-    ZipEarlyEof { written: usize },
+    #[error("unable to deserialize due to: {msg}. This shouldn't occur as this is a deserializer wrapper")]
+    DeserializeImpl { msg: String },
 
     #[error("unable to parse due to: {0}")]
     Parse(#[source] jomini::Error),
@@ -59,29 +54,26 @@ pub enum ImperatorErrorKind {
     Io(#[from] io::Error),
 }
 
-impl From<ZipInflationError> for ImperatorErrorKind {
-    fn from(x: ZipInflationError) -> Self {
-        match x {
-            ZipInflationError::BadData { msg } => ImperatorErrorKind::ZipBadData { msg },
-            ZipInflationError::EarlyEof { written } => ImperatorErrorKind::ZipEarlyEof { written },
-        }
+impl serde::de::Error for ImperatorError {
+    fn custom<T: fmt::Display>(msg: T) -> Self {
+        ImperatorError::new(ImperatorErrorKind::DeserializeImpl {
+            msg: msg.to_string(),
+        })
     }
 }
 
 impl From<jomini::Error> for ImperatorError {
     fn from(value: jomini::Error) -> Self {
-        let kind = if matches!(value.kind(), jomini::ErrorKind::Deserialize(_)) {
-            match value.into_kind() {
-                jomini::ErrorKind::Deserialize(x) => match x.kind() {
-                    &jomini::DeserializeErrorKind::UnknownToken { token_id } => {
-                        ImperatorErrorKind::UnknownToken { token_id }
-                    }
-                    _ => ImperatorErrorKind::Deserialize(x.into()),
-                },
-                _ => unreachable!(),
-            }
-        } else {
-            ImperatorErrorKind::Parse(value)
+        let kind = match value.into_kind() {
+            jomini::ErrorKind::Deserialize(x) => match x.kind() {
+                &jomini::DeserializeErrorKind::UnknownToken { token_id } => {
+                    ImperatorErrorKind::UnknownToken { token_id }
+                }
+                _ => ImperatorErrorKind::Deserialize(x.into()),
+            },
+            _ => ImperatorErrorKind::DeserializeImpl {
+                msg: String::from("unexpected error"),
+            },
         };
 
         ImperatorError::new(kind)
