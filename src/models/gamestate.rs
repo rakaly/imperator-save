@@ -1,27 +1,66 @@
-use crate::{file::ImperatorDeserializer, models::MetadataOwned, ImperatorError};
-use jomini::binary::TokenResolver;
+use crate::ImperatorDate;
 use serde::Deserialize;
 
 #[derive(Debug)]
 pub struct Save {
-    pub meta: MetadataOwned,
+    pub meta: Metadata,
     pub gamestate: GameState,
 }
 
-impl Save {
-    pub fn from_deserializer<RES>(
-        deser: &ImperatorDeserializer<RES>,
-    ) -> Result<Self, ImperatorError>
-    where
-        RES: TokenResolver,
-    {
-        let meta = deser.deserialize()?;
-        let gamestate = deser.deserialize()?;
-        Ok(Save { meta, gamestate })
-    }
+#[derive(Debug, Deserialize)]
+pub struct Metadata {
+    pub save_game_version: i32,
+    pub version: String,
+    pub date: ImperatorDate,
+    #[serde(default)]
+    pub ironman: bool,
+    pub meta_player_name: Option<String>,
+    pub enabled_dlcs: Vec<String>,
+    pub play_time: i32,
+    #[serde(default)]
+    pub iron: bool,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct GameState {
     pub speed: i32,
+}
+
+impl<'de> Deserialize<'de> for Save {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Debug, Deserialize)]
+        struct ImperatorFlatten {
+            pub save_game_version: i32,
+            pub version: String,
+            pub date: ImperatorDate,
+            #[serde(default)]
+            pub ironman: bool,
+            pub meta_player_name: Option<String>,
+            pub enabled_dlcs: Vec<String>,
+            pub play_time: i32,
+            #[serde(default)]
+            pub iron: bool,
+            pub speed: i32,
+        }
+
+        let result = ImperatorFlatten::deserialize(deserializer)?;
+        Ok(Save {
+            meta: Metadata {
+                save_game_version: result.save_game_version,
+                version: result.version,
+                date: result.date,
+                ironman: result.ironman,
+                meta_player_name: result.meta_player_name,
+                enabled_dlcs: result.enabled_dlcs,
+                play_time: result.play_time,
+                iron: result.iron,
+            },
+            gamestate: GameState {
+                speed: result.speed,
+            },
+        })
+    }
 }

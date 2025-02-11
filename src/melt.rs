@@ -1,6 +1,6 @@
 use crate::{
-    file::ImperatorZip, flavor::ImperatorFlavor, Encoding, ImperatorDate, ImperatorError,
-    ImperatorErrorKind, SaveHeader, SaveHeaderKind,
+    flavor::ImperatorFlavor, ImperatorDate, ImperatorError, ImperatorErrorKind, SaveHeader,
+    SaveHeaderKind,
 };
 use jomini::{
     binary::{self, BinaryFlavor, FailedResolveStrategy, TokenReader, TokenResolver},
@@ -9,7 +9,7 @@ use jomini::{
 };
 use std::{
     collections::HashSet,
-    io::{copy, Cursor, Read, Write},
+    io::{Cursor, Read, Write},
 };
 
 /// Output from melting a binary save to plaintext
@@ -27,13 +27,6 @@ impl MeltedDocument {
     pub fn unknown_tokens(&self) -> &HashSet<u16> {
         &self.unknown_tokens
     }
-}
-
-#[derive(Debug)]
-enum MeltInput<'data> {
-    Text(&'data [u8]),
-    Binary(&'data [u8]),
-    Zip(ImperatorZip<'data>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,102 +48,20 @@ impl MeltOptions {
             on_failed_resolve: FailedResolveStrategy::Ignore,
         }
     }
-}
 
-/// Convert a binary save to plaintext
-pub struct ImperatorMelter<'data> {
-    input: MeltInput<'data>,
-    header: SaveHeader,
-    options: MeltOptions,
-}
-
-impl<'data> ImperatorMelter<'data> {
-    pub(crate) fn new_text(x: &'data [u8], header: SaveHeader) -> Self {
-        Self {
-            input: MeltInput::Text(x),
-            options: MeltOptions::default(),
-            header,
-        }
+    pub fn verbatim(self, verbatim: bool) -> Self {
+        MeltOptions { verbatim, ..self }
     }
 
-    pub(crate) fn new_binary(x: &'data [u8], header: SaveHeader) -> Self {
-        Self {
-            input: MeltInput::Binary(x),
-            options: MeltOptions::default(),
-            header,
-        }
-    }
-
-    pub(crate) fn new_zip(x: ImperatorZip<'data>, header: SaveHeader) -> Self {
-        Self {
-            input: MeltInput::Zip(x),
-            options: MeltOptions::default(),
-            header,
-        }
-    }
-
-    pub fn verbatim(&mut self, verbatim: bool) -> &mut Self {
-        self.options.verbatim = verbatim;
-        self
-    }
-
-    pub fn on_failed_resolve(&mut self, strategy: FailedResolveStrategy) -> &mut Self {
-        self.options.on_failed_resolve = strategy;
-        self
-    }
-
-    pub fn input_encoding(&self) -> Encoding {
-        match &self.input {
-            MeltInput::Text(_) => Encoding::Text,
-            MeltInput::Binary(_) => Encoding::Binary,
-            MeltInput::Zip(z) if z.is_text => Encoding::TextZip,
-            MeltInput::Zip(_) => Encoding::BinaryZip,
-        }
-    }
-
-    pub fn melt<Writer, R>(
-        &mut self,
-        mut output: Writer,
-        resolver: &R,
-    ) -> Result<MeltedDocument, ImperatorError>
-    where
-        Writer: Write,
-        R: TokenResolver,
-    {
-        match &mut self.input {
-            MeltInput::Text(x) => {
-                self.header.write(&mut output)?;
-                output.write_all(x)?;
-                Ok(MeltedDocument::new())
-            }
-            MeltInput::Binary(x) => {
-                melt(x, output, resolver, self.options, Some(self.header.clone()))
-            }
-            MeltInput::Zip(zip) => {
-                let file = zip.archive.retrieve_file(zip.gamestate);
-                if zip.is_text {
-                    let mut header = self.header.clone();
-                    header.set_kind(SaveHeaderKind::Text);
-                    header.set_metadata_len(zip.metadata.len() as u64);
-                    header.write(&mut output)?;
-                    let mut reader = file.reader();
-                    copy(&mut reader, &mut output).map_err(ImperatorErrorKind::from)?;
-                    Ok(MeltedDocument::new())
-                } else {
-                    melt(
-                        file.reader(),
-                        &mut output,
-                        resolver,
-                        self.options,
-                        Some(self.header.clone()),
-                    )
-                }
-            }
+    pub fn on_failed_resolve(self, on_failed_resolve: FailedResolveStrategy) -> Self {
+        MeltOptions {
+            on_failed_resolve,
+            ..self
         }
     }
 }
 
-fn update_header(data: &mut Vec<u8>, mut header: SaveHeader) {
+fn update_header(data: &mut [u8], mut header: SaveHeader) {
     header.set_kind(SaveHeaderKind::Text);
     header.set_metadata_len((data.len() + 1 - header.header_len()) as u64);
     let _ = header.write(&mut data[..header.header_len()]);
@@ -161,7 +72,7 @@ pub(crate) fn melt<Reader, Writer, Resolver>(
     mut output: Writer,
     resolver: Resolver,
     options: MeltOptions,
-    header: Option<SaveHeader>,
+    header: SaveHeader,
 ) -> Result<MeltedDocument, ImperatorError>
 where
     Reader: Read,
@@ -170,33 +81,26 @@ where
 {
     let mut unknown_tokens = HashSet::new();
     let mut reader = TokenReader::new(input);
-    let has_header = header.is_some();
-    let melter_return = match header {
-        Some(header) => {
-            let out = Vec::with_capacity((header.metadata_len() * 2) as usize);
-            let mut cursor = Cursor::new(out);
-            let _ = header.write(&mut cursor);
+    let out = Vec::with_capacity((header.metadata_len() * 2) as usize);
+    let mut cursor = Cursor::new(out);
+    let _ = header.write(&mut cursor);
 
-            let ret = melt_inner(
-                &mut reader,
-                &mut cursor,
-                &resolver,
-                options,
-                Some(&header),
-                false,
-                &mut unknown_tokens,
-            )?;
+    let melter_return = melt_inner(
+        &mut reader,
+        &mut cursor,
+        &resolver,
+        options,
+        Some(&header),
+        false,
+        &mut unknown_tokens,
+    )?;
 
-            let mut metadata = cursor.into_inner();
-            update_header(&mut metadata, header);
-            output.write_all(&metadata)?;
-            output.write_all(&b"\n"[..])?;
-            ret
-        }
-        _ => MelterReturn::Eof,
-    };
+    let mut metadata = cursor.into_inner();
+    update_header(&mut metadata, header);
+    output.write_all(&metadata)?;
+    output.write_all(&b"\n"[..])?;
 
-    if !(has_header && melter_return == MelterReturn::Eof) {
+    if melter_return != MelterReturn::Eof {
         melt_inner(
             &mut reader,
             &mut output,

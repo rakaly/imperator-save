@@ -1,4 +1,4 @@
-use imperator_save::{BasicTokenResolver, FailedResolveStrategy, ImperatorFile};
+use imperator_save::{BasicTokenResolver, FailedResolveStrategy, ImperatorFile, MeltOptions};
 use std::env;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -9,9 +9,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let resolver = BasicTokenResolver::from_text_lines(file_data.as_slice())?;
     let stdout = std::io::stdout();
     let handle = stdout.lock();
-    file.melter()
-        .on_failed_resolve(FailedResolveStrategy::Error)
-        .melt(handle, &resolver)
-        .unwrap();
+    let mut writer = std::io::BufWriter::new(handle);
+    let options = MeltOptions::new().on_failed_resolve(FailedResolveStrategy::Error);
+    file.melt(options, resolver, &mut writer)?;
     Ok(())
 }
