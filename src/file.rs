@@ -27,11 +27,11 @@ impl ImperatorFile {
 
         let archive = rawzip::ZipArchive::with_max_search_space(64 * 1024)
             .locate_in_slice(data)
-            .map_err(ImperatorErrorKind::Zip);
+            .map_err(|(_, e)| ImperatorErrorKind::Zip(e));
 
         match archive {
             Ok(archive) => {
-                let archive = archive.into_owned();
+                let archive = archive.into_reader();
                 let mut buf = vec![0u8; rawzip::RECOMMENDED_BUFFER_SIZE];
                 let zip = ImperatorZip::try_from_archive(archive, &mut buf, header.clone())?;
                 Ok(ImperatorSliceFile {
@@ -70,8 +70,7 @@ impl ImperatorFile {
                     kind: ImperatorFsFileKind::Zip(Box::new(zip)),
                 })
             }
-            Err(e) => {
-                let mut file = e.into_inner();
+            Err((mut file, _)) => {
                 file.seek(std::io::SeekFrom::Start(SaveHeader::SIZE as u64))?;
                 if header.kind().is_binary() {
                     Ok(ImperatorFsFile {
