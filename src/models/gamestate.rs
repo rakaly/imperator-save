@@ -9,7 +9,6 @@ pub struct Save {
 
 #[derive(Debug, Deserialize)]
 pub struct Metadata {
-    pub save_game_version: i32,
     pub version: String,
     pub date: ImperatorDate,
     #[serde(default)]
@@ -33,7 +32,6 @@ impl<'de> Deserialize<'de> for Save {
     {
         #[derive(Debug, Deserialize)]
         struct ImperatorFlatten {
-            pub save_game_version: i32,
             pub version: String,
             pub date: ImperatorDate,
             #[serde(default)]
@@ -49,7 +47,6 @@ impl<'de> Deserialize<'de> for Save {
         let result = ImperatorFlatten::deserialize(deserializer)?;
         Ok(Save {
             meta: Metadata {
-                save_game_version: result.save_game_version,
                 version: result.version,
                 date: result.date,
                 ironman: result.ironman,

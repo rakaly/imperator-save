@@ -81,6 +81,29 @@ fn test_observer_melt() {
 }
 
 #[test]
+fn test_patch_20() {
+    skip_if_no_tokens!();
+    let file = utils::request_file("Oponia.rome");
+    let mut file = ImperatorFile::from_file(file).unwrap();
+    assert_eq!(file.encoding(), Encoding::BinaryZip);
+
+    let ImperatorFsFileKind::Zip(zip) = file.kind() else {
+        panic!("Expected a zip file");
+    };
+
+    let save: Metadata = zip
+        .meta()
+        .unwrap()
+        .deserializer(&*TOKENS)
+        .deserialize()
+        .unwrap();
+    assert_eq!(save.version, String::from("2.0.5"));
+
+    let save = file.parse_save(&*TOKENS).unwrap();
+    assert_eq!(save.meta.version, String::from("2.0.5"));
+}
+
+#[test]
 fn test_non_ascii_save() {
     skip_if_no_tokens!();
     let file = utils::request_file("non-ascii.rome");
