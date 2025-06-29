@@ -5,7 +5,10 @@ use imperator_save::{
     BasicTokenResolver, Encoding, MeltOptions,
 };
 use jomini::binary::TokenResolver;
-use std::{io::Cursor, sync::LazyLock};
+use std::{
+    io::{Cursor, Read},
+    sync::LazyLock,
+};
 
 mod utils;
 
@@ -88,6 +91,31 @@ fn test_patch_20() {
     assert_eq!(file.encoding(), Encoding::BinaryZip);
 
     let ImperatorFsFileKind::Zip(zip) = file.kind() else {
+        panic!("Expected a zip file");
+    };
+
+    let save: Metadata = zip
+        .meta()
+        .unwrap()
+        .deserializer(&*TOKENS)
+        .deserialize()
+        .unwrap();
+    assert_eq!(save.version, String::from("2.0.5"));
+
+    let save = file.parse_save(&*TOKENS).unwrap();
+    assert_eq!(save.meta.version, String::from("2.0.5"));
+}
+
+#[test]
+fn test_patch_20_slice() {
+    skip_if_no_tokens!();
+    let mut file = utils::request_file("Oponia.rome");
+    let mut content = Vec::new();
+    file.read_to_end(&mut content).unwrap();
+    let file = ImperatorFile::from_slice(&content).unwrap();
+    assert_eq!(file.encoding(), Encoding::BinaryZip);
+
+    let ImperatorSliceFileKind::Zip(zip) = file.kind() else {
         panic!("Expected a zip file");
     };
 

@@ -23,7 +23,6 @@ impl ImperatorFile {
     /// Creates a Imperator file from a slice of data
     pub fn from_slice(data: &[u8]) -> Result<ImperatorSliceFile, ImperatorError> {
         let header = SaveHeader::from_slice(data)?;
-        let data = &data[header.header_len()..];
 
         let archive = rawzip::ZipArchive::with_max_search_space(64 * 1024)
             .locate_in_slice(data)
@@ -158,10 +157,17 @@ impl<'a> ImperatorSliceFile<'a> {
                 let mut new_header = self.header.clone();
                 new_header.set_kind(crate::SaveHeaderKind::Text);
                 new_header.write(&mut output)?;
-                output.write_all(data.get_ref())?;
+                output.write_all(&data.get_ref()[self.header.header_len()..])?;
                 Ok(MeltedDocument::new())
             }
-            ImperatorSliceFileKind::Binary(data) => data.clone().melt(options, resolver, output),
+            ImperatorSliceFileKind::Binary(data) => {
+                let content = &data.get_ref()[self.header.header_len()..];
+                let mut data = ImperatorBinary {
+                    reader: content,
+                    header: self.header.clone(),
+                };
+                data.melt(options, resolver, output)
+            }
             ImperatorSliceFileKind::Zip(zip) => zip.melt(options, resolver, output),
         }
     }
