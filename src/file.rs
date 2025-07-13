@@ -280,7 +280,7 @@ where
         let mut metadata = None;
 
         while let Some(entry) = entries.next_entry().map_err(ImperatorErrorKind::Zip)? {
-            match entry.file_raw_path() {
+            match entry.file_path().as_ref() {
                 b"gamestate" => gamestate = Some(entry.wayfinder()),
                 b"meta" => metadata = Some(entry.wayfinder()),
                 _ => {}
