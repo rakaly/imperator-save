@@ -21,7 +21,7 @@ pub struct ImperatorFile {}
 
 impl ImperatorFile {
     /// Creates a Imperator file from a slice of data
-    pub fn from_slice(data: &[u8]) -> Result<ImperatorSliceFile, ImperatorError> {
+    pub fn from_slice(data: &[u8]) -> Result<ImperatorSliceFile<'_>, ImperatorError> {
         let header = SaveHeader::from_slice(data)?;
 
         let archive = rawzip::ZipArchive::with_max_search_space(64 * 1024)
@@ -104,7 +104,7 @@ pub struct ImperatorSliceFile<'a> {
 }
 
 impl<'a> ImperatorSliceFile<'a> {
-    pub fn kind(&self) -> &ImperatorSliceFileKind {
+    pub fn kind(&self) -> &ImperatorSliceFileKind<'a> {
         &self.kind
     }
 
@@ -477,7 +477,7 @@ impl<'a> ImperatorParsedText<'a> {
         Ok(ImperatorParsedText { tape })
     }
 
-    pub fn reader(&self) -> ObjectReader<Utf8Encoding> {
+    pub fn reader(&self) -> ObjectReader<'_, '_, Utf8Encoding> {
         self.tape.utf8_reader()
     }
 }
