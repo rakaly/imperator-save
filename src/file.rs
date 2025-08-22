@@ -274,12 +274,13 @@ where
         buf: &mut [u8],
         header: SaveHeader,
     ) -> Result<Self, ImperatorError> {
-        let offset = archive.base_offset();
+        let mut offset = archive.directory_offset();
         let mut entries = archive.entries(buf);
         let mut gamestate = None;
         let mut metadata = None;
 
         while let Some(entry) = entries.next_entry().map_err(ImperatorErrorKind::Zip)? {
+            offset = offset.min(entry.local_header_offset());
             match entry.file_path().as_ref() {
                 b"gamestate" => gamestate = Some(entry.wayfinder()),
                 b"meta" => metadata = Some(entry.wayfinder()),
@@ -324,7 +325,7 @@ where
         Ok(data)
     }
 
-    pub fn meta(&self) -> Result<ImperatorEntry<'_, rawzip::ZipReader<'_, R>, R>, ImperatorError> {
+    pub fn meta(&self) -> Result<ImperatorEntry<rawzip::ZipReader<&R>, &R>, ImperatorError> {
         let kind = match &self.metadata {
             ImperatorMetaKind::Inlined(x) => {
                 let mut entry = vec![0u8; x.len()];
@@ -393,18 +394,18 @@ pub enum ImperatorMetaKind {
 }
 
 #[derive(Debug)]
-pub struct ImperatorEntry<'archive, R, ReadAt> {
-    inner: ImperatorEntryKind<'archive, R, ReadAt>,
+pub struct ImperatorEntry<R, ReadAt> {
+    inner: ImperatorEntryKind<R, ReadAt>,
     header: SaveHeader,
 }
 
 #[derive(Debug)]
-pub enum ImperatorEntryKind<'archive, R, ReadAt> {
+pub enum ImperatorEntryKind<R, ReadAt> {
     Inlined(Cursor<Vec<u8>>),
-    Zip(ZipVerifier<'archive, CompressedFileReader<R>, ReadAt>),
+    Zip(ZipVerifier<CompressedFileReader<R>, ReadAt>),
 }
 
-impl<R, ReadAt> Read for ImperatorEntry<'_, R, ReadAt>
+impl<R, ReadAt> Read for ImperatorEntry<R, ReadAt>
 where
     R: Read,
     ReadAt: ReaderAt,
@@ -417,7 +418,7 @@ where
     }
 }
 
-impl<'archive, R, ReadAt> ImperatorEntry<'archive, R, ReadAt>
+impl<R, ReadAt> ImperatorEntry<R, ReadAt>
 where
     R: Read,
     ReadAt: ReaderAt,
@@ -425,7 +426,7 @@ where
     pub fn deserializer<'a, RES>(
         &'a mut self,
         resolver: RES,
-    ) -> ImperatorModeller<&'a mut ImperatorEntry<'archive, R, ReadAt>, RES>
+    ) -> ImperatorModeller<&'a mut ImperatorEntry<R, ReadAt>, RES>
     where
         RES: TokenResolver,
     {
