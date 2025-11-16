@@ -1,8 +1,6 @@
 use core::panic;
 use imperator_save::{
-    file::{ImperatorFile, ImperatorFsFileKind, ImperatorSliceFileKind},
-    models::{GameState, Metadata},
-    BasicTokenResolver, Encoding, MeltOptions,
+    BasicTokenResolver, DeserializeImperator, ImperatorBinaryDeserialization, ImperatorFile, ImperatorMelt, JominiFileKind, MeltOptions, SaveDataKind, SaveHeaderKind, SaveMetadataKind, models::{GameState, Metadata, Save}
 };
 use jomini::binary::TokenResolver;
 use std::{
@@ -31,8 +29,8 @@ fn test_debug_save() {
     let data = utils::inflate(utils::request_file("debug-save.zip"));
 
     let file = ImperatorFile::from_slice(&data).unwrap();
-    assert_eq!(file.encoding(), Encoding::Text);
-    let ImperatorSliceFileKind::Text(text) = file.kind() else {
+    assert_eq!(file.header().kind(), SaveHeaderKind::Text);
+    let JominiFileKind::Uncompressed(SaveDataKind::Text(text)) = file.kind() else {
         panic!("Expected a text file");
     };
 
@@ -47,23 +45,22 @@ fn test_debug_save() {
 fn test_observer_save() {
     skip_if_no_tokens!();
     let file = utils::request_file("observer1.5.rome");
-    let mut file = ImperatorFile::from_file(file).unwrap();
-    assert_eq!(file.encoding(), Encoding::BinaryZip);
+    let file = ImperatorFile::from_file(file).unwrap();
+    assert_eq!(file.header().kind(), SaveHeaderKind::UnifiedBinary);
 
-    let ImperatorFsFileKind::Zip(zip) = file.kind() else {
+    let JominiFileKind::Zip(zip) = file.kind() else {
         panic!("Expected a zip file");
     };
 
-    let save: Metadata = zip
-        .meta()
-        .unwrap()
-        .deserializer(&*TOKENS)
-        .deserialize()
-        .unwrap();
+    let save: Metadata = match zip.meta().unwrap() {
+        SaveMetadataKind::Text(mut x) => x.deserializer().deserialize(),
+        SaveMetadataKind::Binary(mut x) => x.deserializer(&*TOKENS).deserialize(),
+    }
+    .unwrap();
+
     assert_eq!(save.version, String::from("1.5.3"));
 
-    let save = file.parse_save(&*TOKENS).unwrap();
-    assert_eq!(file.encoding(), Encoding::BinaryZip);
+    let save: Save = (&file).deserialize(&*TOKENS).unwrap();
     assert_eq!(save.meta.version, String::from("1.5.3"));
 }
 
@@ -72,10 +69,10 @@ fn test_observer_melt() {
     skip_if_no_tokens!();
     let melt = utils::inflate(utils::request_file("observer1.5_melted.rome.zip"));
     let file = utils::request_file("observer1.5.rome");
-    let mut file = ImperatorFile::from_file(file).unwrap();
+    let file = ImperatorFile::from_file(file).unwrap();
     let mut out = Cursor::new(Vec::new());
     let options = MeltOptions::new();
-    file.melt(options, &*TOKENS, &mut out).unwrap();
+    (&file).melt(options, &*TOKENS, &mut out).unwrap();
     assert_eq!(
         &melt[..],
         out.get_ref(),
@@ -87,22 +84,21 @@ fn test_observer_melt() {
 fn test_patch_20() {
     skip_if_no_tokens!();
     let file = utils::request_file("Oponia.rome");
-    let mut file = ImperatorFile::from_file(file).unwrap();
-    assert_eq!(file.encoding(), Encoding::BinaryZip);
+    let file = ImperatorFile::from_file(file).unwrap();
+    assert_eq!(file.header().kind(), SaveHeaderKind::UnifiedBinary);
 
-    let ImperatorFsFileKind::Zip(zip) = file.kind() else {
+    let JominiFileKind::Zip(zip) = file.kind() else {
         panic!("Expected a zip file");
     };
 
-    let save: Metadata = zip
-        .meta()
-        .unwrap()
-        .deserializer(&*TOKENS)
-        .deserialize()
-        .unwrap();
+    let save: Metadata = match zip.meta().unwrap() {
+        SaveMetadataKind::Text(mut x) => x.deserializer().deserialize(),
+        SaveMetadataKind::Binary(mut x) => x.deserializer(&*TOKENS).deserialize(),
+    }
+    .unwrap();
     assert_eq!(save.version, String::from("2.0.5"));
 
-    let save = file.parse_save(&*TOKENS).unwrap();
+    let save: Save = (&file).deserialize(&*TOKENS).unwrap();
     assert_eq!(save.meta.version, String::from("2.0.5"));
 }
 
@@ -113,21 +109,20 @@ fn test_patch_20_slice() {
     let mut content = Vec::new();
     file.read_to_end(&mut content).unwrap();
     let file = ImperatorFile::from_slice(&content).unwrap();
-    assert_eq!(file.encoding(), Encoding::BinaryZip);
+    assert_eq!(file.header().kind(), SaveHeaderKind::UnifiedBinary);
 
-    let ImperatorSliceFileKind::Zip(zip) = file.kind() else {
+    let JominiFileKind::Zip(zip) = file.kind() else {
         panic!("Expected a zip file");
     };
 
-    let save: Metadata = zip
-        .meta()
-        .unwrap()
-        .deserializer(&*TOKENS)
-        .deserialize()
-        .unwrap();
+    let save: Metadata = match zip.meta().unwrap() {
+        SaveMetadataKind::Text(mut x) => x.deserializer().deserialize(),
+        SaveMetadataKind::Binary(mut x) => x.deserializer(&*TOKENS).deserialize(),
+    }
+    .unwrap();
     assert_eq!(save.version, String::from("2.0.5"));
 
-    let save = file.parse_save(&*TOKENS).unwrap();
+    let save: Save = (&file).deserialize(&*TOKENS).unwrap();
     assert_eq!(save.meta.version, String::from("2.0.5"));
 }
 
@@ -135,9 +130,9 @@ fn test_patch_20_slice() {
 fn test_non_ascii_save() {
     skip_if_no_tokens!();
     let file = utils::request_file("non-ascii.rome");
-    let mut file = ImperatorFile::from_file(file).unwrap();
-    let save = file.parse_save(&*TOKENS).unwrap();
-    assert_eq!(file.encoding(), Encoding::BinaryZip);
+    let file = ImperatorFile::from_file(file).unwrap();
+    let save: Save = (&file).deserialize(&*TOKENS).unwrap();
+    assert_eq!(file.header().kind(), SaveHeaderKind::UnifiedBinary);
     assert_eq!(save.meta.version, String::from("1.5.3"));
 }
 
@@ -149,15 +144,14 @@ fn test_roundtrip_header_melt() {
 
     let mut out = Cursor::new(Vec::new());
     let options = MeltOptions::new();
-    file.melt(options, &*TOKENS, &mut out).unwrap();
+    (&file).melt(options, &*TOKENS, &mut out).unwrap();
 
     let file = ImperatorFile::from_slice(&out.get_ref()).unwrap();
-    let ImperatorSliceFileKind::Text(text) = file.kind() else {
+    let JominiFileKind::Uncompressed(SaveDataKind::Text(text)) = file.kind() else {
         panic!("Expected a text file");
     };
     let meta: Metadata = text.deserializer().deserialize().unwrap();
 
-    assert_eq!(file.encoding(), Encoding::Text);
     assert_eq!(meta.version, String::from("1.5.3"));
 }
 
@@ -170,6 +164,6 @@ fn test_header_melt() {
     let file = ImperatorFile::from_slice(&data[..]).unwrap();
     let mut out = Cursor::new(Vec::new());
     let options = MeltOptions::new();
-    file.melt(options, &*TOKENS, &mut out).unwrap();
+    (&file).melt(options, &*TOKENS, &mut out).unwrap();
     assert_eq!(&melted[..], out.get_ref());
 }

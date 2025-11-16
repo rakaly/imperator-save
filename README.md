@@ -5,18 +5,20 @@
 Imperator Save is a library to ergonomically work with Imperator Rome saves (debug + standard).
 
 ```rust
-use std::collections::HashMap;
-use imperator_save::{ImperatorFile, Encoding, models::Save};
+use imperator_save::{ImperatorFile, models::Save, BasicTokenResolver};
 
-let data = std::fs::read("assets/saves/observer1.5.rome")?;
-let file = ImperatorFile::from_slice(&data[..])?;
-assert_eq!(file.encoding(), Encoding::BinaryZip);
+// Load the file
+let file_path = "assets/saves/observer1.5.rome";
+let mut file = ImperatorFile::from_file(std::fs::File::open(file_path)?)?;
 
-let resolver = HashMap::<u16, &str>::new();
-let mut zip_sink = Vec::new();
-let parsed_file = file.parse(&mut zip_sink)?;
-let save = Save::from_deserializer(&parsed_file.deserializer(), &resolver)?;
+// Create a token resolver (for binary saves)
+// Note: For ironman saves, you need the actual token data
+let tokens = BasicTokenResolver::from_text_lines(b"").unwrap();
+
+// Parse the save
+let save = Save::from_file(&mut file, &tokens)?;
 assert_eq!(save.meta.version, String::from("1.5.3"));
+# Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
 ## Ironman

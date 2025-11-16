@@ -1,10 +1,8 @@
-use crate::{
-    flavor::ImperatorFlavor, ImperatorDate, ImperatorError, ImperatorErrorKind, SaveHeader,
-    SaveHeaderKind,
-};
+use crate::{flavor::ImperatorFlavor, ImperatorDate, ImperatorError, ImperatorErrorKind};
 use jomini::{
     binary::{self, BinaryFlavor, FailedResolveStrategy, TokenReader, TokenResolver},
     common::PdsDate,
+    envelope::{SaveHeader, SaveHeaderKind},
     TextWriterBuilder,
 };
 use std::{

@@ -1,6 +1,13 @@
 use jomini::{binary::BinaryFlavor, Encoding, Utf8Encoding};
 
+#[derive(Debug, Default, Clone, Copy)]
 pub struct ImperatorFlavor;
+
+impl ImperatorFlavor {
+    pub fn new() -> Self {
+        ImperatorFlavor
+    }
+}
 
 impl Encoding for ImperatorFlavor {
     fn decode<'a>(&self, data: &'a [u8]) -> std::borrow::Cow<'a, str> {
