@@ -27,18 +27,13 @@ Ironman saves are supported through a provided `TokenResolver`. Per PDS counsel,
 
 mod date;
 mod errors;
-mod extraction;
-pub mod file;
+mod file;
 mod flavor;
-mod header;
 mod melt;
 pub mod models;
 
 pub use date::*;
 pub use errors::*;
-pub use extraction::*;
-#[doc(inline)]
-pub use file::ImperatorFile;
-pub use header::*;
+pub use file::*;
 pub use jomini::binary::{BasicTokenResolver, FailedResolveStrategy};
 pub use melt::*;

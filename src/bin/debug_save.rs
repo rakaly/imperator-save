@@ -1,4 +1,4 @@
-use imperator_save::{BasicTokenResolver, ImperatorFile, PdsDate};
+use imperator_save::{models::Save, BasicTokenResolver, ImperatorFile, PdsDate};
 use std::env;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -7,7 +7,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut file = ImperatorFile::from_file(file)?;
     let file_data = std::fs::read("assets/imperator.txt").unwrap_or_default();
     let resolver = BasicTokenResolver::from_text_lines(file_data.as_slice())?;
-    let game = file.parse_save(resolver)?;
+    let game = Save::from_file(&mut file, &resolver)?;
     print!("{}", game.meta.date.game_fmt());
     Ok(())
 }
