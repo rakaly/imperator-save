@@ -21,7 +21,7 @@ impl Save {
                 .deserializer()
                 .deserialize()
                 .map_err(ImperatorErrorKind::Deserialize)?),
-            JominiFileKind::Uncompressed(SaveDataKind::Binary(x)) => Ok(x
+            JominiFileKind::Uncompressed(SaveDataKind::Binary(x)) => Ok((&*x)
                 .deserializer(resolver)
                 .deserialize()
                 .map_err(ImperatorErrorKind::Deserialize)?),

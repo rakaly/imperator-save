@@ -23,7 +23,7 @@ pub trait ImperatorBinaryDeserialization {
     ) -> ImperatorBinaryDeserializer<'res, RES, impl Read + '_>;
 }
 
-impl<R: ReaderAt> ImperatorBinaryDeserialization for SaveData<BinaryEncoding, R> {
+impl<R: ReaderAt> ImperatorBinaryDeserialization for &'_ SaveData<BinaryEncoding, R> {
     fn deserializer<'res, RES: TokenResolver>(
         &mut self,
         resolver: &'res RES,
@@ -69,7 +69,7 @@ pub trait ImperatorTextMelt {
         Writer: Write;
 }
 
-impl<R: ReaderAt> ImperatorMelt for ImperatorFile<R> {
+impl<R: ReaderAt> ImperatorMelt for &'_ ImperatorFile<R> {
     fn melt<Resolver, Writer>(
         &mut self,
         options: MeltOptions,
@@ -99,7 +99,7 @@ impl<R: ReaderAt> ImperatorMelt for ImperatorFile<R> {
     }
 }
 
-impl<R: ReaderAt> ImperatorMelt for JominiZip<R> {
+impl<R: ReaderAt> ImperatorMelt for &'_ JominiZip<R> {
     fn melt<Resolver, Writer>(
         &mut self,
         options: MeltOptions,
@@ -129,7 +129,7 @@ impl<R: ReaderAt> ImperatorMelt for JominiZip<R> {
     }
 }
 
-impl<R: ReaderAt> ImperatorMelt for SaveData<BinaryEncoding, R> {
+impl<R: ReaderAt> ImperatorMelt for &'_ SaveData<BinaryEncoding, R> {
     fn melt<Resolver, Writer>(
         &mut self,
         options: MeltOptions,
@@ -168,7 +168,7 @@ impl<R: Read> ImperatorMelt for SaveMetadataKind<R> {
     }
 }
 
-impl<R: ReaderAt> ImperatorTextMelt for SaveData<TextEncoding, R> {
+impl<R: ReaderAt> ImperatorTextMelt for &'_ SaveData<TextEncoding, R> {
     fn melt<Writer>(&mut self, mut output: Writer) -> Result<melt::MeltedDocument, ImperatorError>
     where
         Writer: Write,

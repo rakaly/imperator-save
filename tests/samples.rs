@@ -71,10 +71,10 @@ fn test_observer_melt() {
     skip_if_no_tokens!();
     let melt = utils::inflate(utils::request_file("observer1.5_melted.rome.zip"));
     let file = utils::request_file("observer1.5.rome");
-    let mut file = ImperatorFile::from_file(file).unwrap();
+    let file = ImperatorFile::from_file(file).unwrap();
     let mut out = Cursor::new(Vec::new());
     let options = MeltOptions::new();
-    file.melt(options, &*TOKENS, &mut out).unwrap();
+    (&file).melt(options, &*TOKENS, &mut out).unwrap();
     assert_eq!(
         &melt[..],
         out.get_ref(),
@@ -142,11 +142,11 @@ fn test_non_ascii_save() {
 fn test_roundtrip_header_melt() {
     skip_if_no_tokens!();
     let data = include_bytes!("fixtures/header");
-    let mut file = ImperatorFile::from_slice(&data[..]).unwrap();
+    let file = ImperatorFile::from_slice(&data[..]).unwrap();
 
     let mut out = Cursor::new(Vec::new());
     let options = MeltOptions::new();
-    file.melt(options, &*TOKENS, &mut out).unwrap();
+    (&file).melt(options, &*TOKENS, &mut out).unwrap();
 
     let file = ImperatorFile::from_slice(&out.get_ref()).unwrap();
     let JominiFileKind::Uncompressed(SaveDataKind::Text(text)) = file.kind() else {
@@ -163,9 +163,9 @@ fn test_header_melt() {
     let data = include_bytes!("fixtures/header");
     let melted = include_bytes!("fixtures/header.melted");
 
-    let mut file = ImperatorFile::from_slice(&data[..]).unwrap();
+    let file = ImperatorFile::from_slice(&data[..]).unwrap();
     let mut out = Cursor::new(Vec::new());
     let options = MeltOptions::new();
-    file.melt(options, &*TOKENS, &mut out).unwrap();
+    (&file).melt(options, &*TOKENS, &mut out).unwrap();
     assert_eq!(&melted[..], out.get_ref());
 }
