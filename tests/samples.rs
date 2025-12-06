@@ -146,7 +146,8 @@ fn test_roundtrip_header_melt() {
     let options = MeltOptions::new();
     (&file).melt(options, &*TOKENS, &mut out).unwrap();
 
-    let file = ImperatorFile::from_slice(&out.get_ref()).unwrap();
+    let binding = out.get_ref();
+    let file = ImperatorFile::from_slice(&binding).unwrap();
     let JominiFileKind::Uncompressed(SaveDataKind::Text(text)) = file.kind() else {
         panic!("Expected a text file");
     };
