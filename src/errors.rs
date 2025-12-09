@@ -39,13 +39,16 @@ pub enum ImperatorErrorKind {
     Writer(#[source] jomini::Error),
 
     #[error("unknown binary token encountered: {token_id:#x}")]
-    UnknownToken { token_id: u16 },
+    UnknownToken { token_id: u32 },
 
     #[error("invalid header")]
     InvalidHeader,
 
     #[error("io error: {0}")]
     Io(#[from] io::Error),
+
+    #[error("invalid syntax: {0}")]
+    InvalidSyntax(String),
 }
 
 impl From<jomini::Error> for ImperatorError {
