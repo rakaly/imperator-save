@@ -231,16 +231,18 @@ impl<R: ReaderAt> DeserializeImperator for &'_ ImperatorFile<R> {
                 .deserializer(&resolver)
                 .deserialize()
                 .map_err(ImperatorErrorKind::Deserialize)?),
-            JominiFileKind::Zip(x) => Ok(match x.gamestate().map_err(ImperatorErrorKind::Envelope)? {
-                SaveContentKind::Text(mut x) => x
-                    .deserializer()
-                    .deserialize()
-                    .map_err(ImperatorErrorKind::Deserialize)?,
-                SaveContentKind::Binary(mut x) => x
-                    .deserializer(&resolver)
-                    .deserialize()
-                    .map_err(ImperatorErrorKind::Deserialize)?,
-            }),
+            JominiFileKind::Zip(x) => {
+                Ok(match x.gamestate().map_err(ImperatorErrorKind::Envelope)? {
+                    SaveContentKind::Text(mut x) => x
+                        .deserializer()
+                        .deserialize()
+                        .map_err(ImperatorErrorKind::Deserialize)?,
+                    SaveContentKind::Binary(mut x) => x
+                        .deserializer(&resolver)
+                        .deserialize()
+                        .map_err(ImperatorErrorKind::Deserialize)?,
+                })
+            }
         }
     }
 }

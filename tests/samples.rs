@@ -1,6 +1,8 @@
 use core::panic;
 use imperator_save::{
-    BasicTokenResolver, DeserializeImperator, ImperatorBinaryDeserialization, ImperatorFile, ImperatorMelt, JominiFileKind, MeltOptions, SaveDataKind, SaveHeaderKind, SaveMetadataKind, models::{GameState, Metadata, Save}
+    models::{GameState, Metadata, Save},
+    BasicTokenResolver, DeserializeImperator, ImperatorBinaryDeserialization, ImperatorFile,
+    ImperatorMelt, JominiFileKind, MeltOptions, SaveDataKind, SaveHeaderKind, SaveMetadataKind,
 };
 use jomini::binary::TokenResolver;
 use std::{
@@ -26,9 +28,9 @@ macro_rules! skip_if_no_tokens {
 #[test]
 fn test_debug_save() {
     skip_if_no_tokens!();
-    let data = utils::inflate(utils::request_file("debug-save.zip"));
+    let file = utils::request_file("debug-save.rome");
 
-    let file = ImperatorFile::from_slice(&data).unwrap();
+    let file = ImperatorFile::from_file(file).unwrap();
     assert_eq!(file.header().kind(), SaveHeaderKind::Text);
     let JominiFileKind::Uncompressed(SaveDataKind::Text(text)) = file.kind() else {
         panic!("Expected a text file");
@@ -67,14 +69,16 @@ fn test_observer_save() {
 #[test]
 fn test_observer_melt() {
     skip_if_no_tokens!();
-    let melt = utils::inflate(utils::request_file("observer1.5_melted.rome.zip"));
+    let mut melt = utils::request_file("observer1.5_melted.rome");
     let file = utils::request_file("observer1.5.rome");
     let file = ImperatorFile::from_file(file).unwrap();
     let mut out = Cursor::new(Vec::new());
     let options = MeltOptions::new();
     (&file).melt(options, &*TOKENS, &mut out).unwrap();
+    let mut buf = Vec::new();
+    melt.read_to_end(&mut buf).unwrap();
     assert_eq!(
-        &melt[..],
+        &buf[..],
         out.get_ref(),
         "observer 1.5 did not melt correctly"
     );

@@ -1,4 +1,6 @@
-use imperator_save::{BasicTokenResolver, DeserializeImperator, ImperatorFile, PdsDate, models::Save};
+use imperator_save::{
+    models::Save, BasicTokenResolver, DeserializeImperator, ImperatorFile, PdsDate,
+};
 use std::env;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
