@@ -13,22 +13,22 @@ pub use jomini::envelope::*;
 /// Type alias for Imperator text deserializer
 ///
 /// A lazy way to avoid the need to reimplement deserializer
-pub type ImperatorTextDeserializer<R> = TextReaderDeserializer<R, Utf8Encoding>;
-pub type ImperatorBinaryDeserializer<'res, RES, R> =
-    BinaryReaderDeserializer<'res, RES, ImperatorFlavor, R>;
+pub type ImperatorTextDeserializer<'r> = TextReaderDeserializer<'r, Utf8Encoding>;
+pub type ImperatorBinaryDeserializer<'r, 'res, RES> =
+    BinaryReaderDeserializer<'r, 'res, RES, ImperatorFlavor>;
 
 pub trait ImperatorBinaryDeserialization {
     fn deserializer<'res, RES: TokenResolver>(
         &mut self,
         resolver: &'res RES,
-    ) -> ImperatorBinaryDeserializer<'res, RES, impl Read + '_>;
+    ) -> ImperatorBinaryDeserializer<'_, 'res, RES>;
 }
 
 impl<R: ReaderAt> ImperatorBinaryDeserialization for &'_ SaveData<BinaryEncoding, R> {
     fn deserializer<'res, RES: TokenResolver>(
         &mut self,
         resolver: &'res RES,
-    ) -> ImperatorBinaryDeserializer<'res, RES, impl Read + '_> {
+    ) -> ImperatorBinaryDeserializer<'_, 'res, RES> {
         BinaryDeserializerBuilder::with_flavor(ImperatorFlavor::new())
             .from_reader(self.body().cursor(), resolver)
     }
@@ -38,7 +38,7 @@ impl<R: Read> ImperatorBinaryDeserialization for SaveContent<BinaryEncoding, R> 
     fn deserializer<'res, RES: TokenResolver>(
         &mut self,
         resolver: &'res RES,
-    ) -> ImperatorBinaryDeserializer<'res, RES, impl Read + '_> {
+    ) -> ImperatorBinaryDeserializer<'_, 'res, RES> {
         BinaryDeserializerBuilder::with_flavor(ImperatorFlavor::new()).from_reader(self, resolver)
     }
 }
@@ -47,7 +47,7 @@ impl<R: Read> ImperatorBinaryDeserialization for SaveMetadata<BinaryEncoding, R>
     fn deserializer<'res, RES: TokenResolver>(
         &mut self,
         resolver: &'res RES,
-    ) -> ImperatorBinaryDeserializer<'res, RES, impl Read + '_> {
+    ) -> ImperatorBinaryDeserializer<'_, 'res, RES> {
         BinaryDeserializerBuilder::with_flavor(ImperatorFlavor::new()).from_reader(self, resolver)
     }
 }
