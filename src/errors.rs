@@ -49,6 +49,9 @@ pub enum ImperatorErrorKind {
 
     #[error("invalid syntax: {0}")]
     InvalidSyntax(String),
+
+    #[error("expected the binary integer: {0} to be parsed as a date")]
+    InvalidDate(i32),
 }
 
 impl From<jomini::Error> for ImperatorError {

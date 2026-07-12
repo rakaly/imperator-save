@@ -146,6 +146,7 @@ where
         wtr.write_unquoted(START_OF_GAMESTATE_FIELD)?;
     }
 
+    let mut known_date = false;
     let mut known_number = false;
     let mut quoted_buffer_enabled = false;
     let mut quoted_buffer: Vec<u8> = Vec::new();
@@ -164,7 +165,16 @@ where
             jomini::binary::Token::Open => wtr.write_start()?,
             jomini::binary::Token::Close => wtr.write_end()?,
             jomini::binary::Token::I32(x) => {
-                if known_number {
+                if known_date {
+                    if let Some(date) = ImperatorDate::from_binary(x) {
+                        wtr.write_date(date.game_fmt())?;
+                    } else if options.on_failed_resolve != FailedResolveStrategy::Error {
+                        wtr.write_i32(x)?;
+                    } else {
+                        return Err(ImperatorError::new(ImperatorErrorKind::InvalidDate(x)));
+                    }
+                    known_date = false;
+                } else if known_number {
                     wtr.write_i32(x)?;
                     known_number = false;
                 } else if let Some(date) = ImperatorDate::from_binary_heuristic(x) {
@@ -207,6 +217,7 @@ where
                     }
 
                     known_number = id == "seed";
+                    known_date = id == "birth_date";
                     wtr.write_unquoted(id.as_bytes())?;
                 }
                 None => match options.on_failed_resolve {
