@@ -1,5 +1,8 @@
 #![no_main]
-use imperator_save::{file::ImperatorParsedText, BasicTokenResolver};
+use imperator_save::{
+    models::Save, BasicTokenResolver, DeserializeImperator, ImperatorFile, ImperatorMelt,
+    JominiFileKind, MeltOptions, SaveDataKind,
+};
 use libfuzzer_sys::fuzz_target;
 use std::sync::LazyLock;
 
@@ -9,21 +12,14 @@ static TOKENS: LazyLock<BasicTokenResolver> = LazyLock::new(|| {
 });
 
 fn run(data: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
-    let file = imperator_save::ImperatorFile::from_slice(&data)?;
+    let file = ImperatorFile::from_slice(data)?;
 
     let mut sink = std::io::sink();
-    let _ = file.melt(imperator_save::MeltOptions::new(), &*TOKENS, &mut sink);
-    let _ = file.parse_save(&*TOKENS);
-    let _ = file.encoding();
+    let _ = (&file).melt(MeltOptions::new(), &*TOKENS, &mut sink);
+    let _ = (&file).deserialize::<Save>(&*TOKENS);
 
-    match file.kind() {
-        imperator_save::file::ImperatorSliceFileKind::Text(x) => {
-            ImperatorParsedText::from_raw(x.get_ref())?
-                .reader()
-                .json()
-                .to_writer(std::io::sink())?;
-        }
-        _ => {}
+    if let JominiFileKind::Uncompressed(SaveDataKind::Text(text)) = file.kind() {
+        let _ = text.deserializer().deserialize::<Save>();
     }
 
     Ok(())
