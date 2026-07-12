@@ -122,8 +122,8 @@ enum MelterReturn {
     StartOfGamestateField,
 }
 
-fn melt_inner<Reader, Writer, Resolver>(
-    reader: &mut TokenReader<Reader>,
+fn melt_inner<Writer, Resolver>(
+    reader: &mut TokenReader,
     output: Writer,
     resolver: Resolver,
     options: MeltOptions,
@@ -132,7 +132,6 @@ fn melt_inner<Reader, Writer, Resolver>(
     unknown_tokens: &mut HashSet<u16>,
 ) -> Result<MelterReturn, ImperatorError>
 where
-    Reader: Read,
     Writer: Write,
     Resolver: TokenResolver,
 {
